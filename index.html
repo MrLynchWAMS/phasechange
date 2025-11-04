@@ -1000,18 +1000,30 @@
       const animRef = useRef(null);
       const totalParticles = 200; // Increased from 70
 
-      // Initialize particles arranged initially as a lattice (solid)
+      // Use a ref to hold the latest simState, preventing stale closures in the animation loop
+      const simStateRef = useRef(simState);
+      useEffect(() => {
+        simStateRef.current = simState;
+      }, [simState]);
+
+      // Main effect for initialization and animation loop. Re-runs when substance changes.
       useEffect(() => {
         const canvas = canvasRef.current;
+        const ctx = canvas.getContext("2d");
         const w = canvas.width,
           h = canvas.height;
+
+        // Guard against running before canvas is sized, which causes off-screen particle placement
+        if (w === 0 || h === 0) return;
+
+        // --- Particle Initialization (runs inside this effect) ---
         const arr = [];
         const grid = Math.ceil(Math.sqrt(totalParticles));
         const spacingX = (w - 40) / grid;
-        const spacingY = 10; // Tighter packing
+        const spacingY = 10;
         let count = 0;
         const blockHeight = Math.ceil(totalParticles / grid) * spacingY;
-        const baseY = h - 12; // Start at the bottom
+        const baseY = solidFloats ? blockHeight + 12 : h - 12;
         for (let i = 0; i < grid && count < totalParticles; i++) {
           for (let j = 0; j < grid && count < totalParticles; j++) {
             const yPos = baseY - j * spacingY;
@@ -1021,24 +1033,15 @@
               vx: 0,
               vy: 0,
               baseX: 20 + i * spacingX,
-              baseY: baseY - j * spacingY,
-              type: "solid" // Persist type across frames
+              baseY: yPos,
+              type: "solid",
             });
             count++;
           }
         }
         particlesRef.current = arr;
-        return () => {
-          if (animRef.current) cancelAnimationFrame(animRef.current);
-        };
-      }, []);
 
-      useEffect(() => {
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext("2d");
-        const w = canvas.width,
-          h = canvas.height;
-        
+        // --- Animation Loop ---
         const gridCols = Math.ceil(w / CELL_SIZE);
         const gridRows = Math.ceil(h / CELL_SIZE);
         
@@ -1047,16 +1050,33 @@
           ctx.fillStyle = "#222";
           ctx.fillRect(0, 0, w, h);
 
-          const { melt_fraction = 0, boil_fraction = 0 } = simState || {};
+          const { melt_fraction = 0, boil_fraction = 0 } = simStateRef.current || {};
           const fracSolid = Math.max(0, 1 - melt_fraction);
           const fracGas = Math.max(0, boil_fraction);
           const fracLiquid = 1 - fracSolid - fracGas;
+          const hasLiquid = fracLiquid > 0.01; // Condition for buoyancy
           
           let targetSolid = Math.round(totalParticles * fracSolid);
           let targetGas = Math.round(totalParticles * fracGas);
           let targetLiquid = totalParticles - targetSolid - targetGas;
 
           const parts = particlesRef.current;
+
+          // Make solid block cohesive and movable by updating its base lattice position
+          const solidParticles = parts.filter(p => p.type === 'solid');
+          if (solidParticles.length > 0) {
+            let avgVx = 0, avgVy = 0;
+            for (const p of solidParticles) {
+              avgVx += p.vx || 0;
+              avgVy += p.vy || 0;
+            }
+            avgVx /= solidParticles.length;
+            avgVy /= solidParticles.length;
+            for (const p of solidParticles) {
+              p.baseX += avgVx;
+              p.baseY += avgVy;
+            }
+          }
           
           // Count current types
           let currentSolid = parts.filter(p => p.type === "solid").length;
@@ -1085,8 +1105,10 @@
             const liquids = parts.filter(p => p.type === "liquid")
               .sort((a, b) => b.y - a.y); // Top liquids first
             for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, targetGas - currentGas); i++) {
-              liquids[i].type = "gas";
-              liquids[i].vy = -3; // Give upward kick
+              const p = liquids[i];
+              p.type = "gas";
+              p.vx = (p.vx || 0) + (Math.random() - 0.5) * 4;
+              p.vy = (p.vy || 0) + (Math.random() - 0.7) * 4; // Bias upwards
             }
           } else if (currentGas > targetGas) {
             // Condensing: convert gases near bottom to liquid
@@ -1117,19 +1139,24 @@
 
             // Phase-specific forces
             if (p.type === "solid") {
-              // Spring back to lattice position with vibration
+              // Spring back to lattice, with vibration
               fx += (p.baseX - p.x) * 0.2 + (Math.random() - 0.5) * 0.3;
               fy += (p.baseY - p.y) * 0.2 + (Math.random() - 0.5) * 0.3;
-              fy += 0.15; // Slight gravity
+
+              // Apply buoyancy or gravity
+              if (solidFloats && hasLiquid) {
+                fy -= 0.4; // Buoyancy force
+              } else {
+                fy += 0.35; // Gravity
+              }
             } else if (p.type === "liquid") {
               // Gravity and brownian motion
               fx += (Math.random() - 0.5) * 0.6;
               fy += (Math.random() - 0.5) * 0.6;
               fy += 0.35; // Gravity
             } else {
-              // gas: random motion to fill container
-              fx += (Math.random() - 0.5) * 1.5;
-              fy += (Math.random() - 0.5) * 1.5;
+              // gas: inertial motion
+              // No per-frame forces, velocity is maintained
             }
 
             // Particle-particle interactions using cell list
@@ -1185,8 +1212,9 @@
               speedLimit = 3.0;
               damping = 0.93;
             } else {
-              speedLimit = 6;
-              damping = 0.985;
+              // gas: no damping, pure inertial motion
+              speedLimit = 8;
+              damping = 1.0;
             }
 
             p.vx *= damping;
