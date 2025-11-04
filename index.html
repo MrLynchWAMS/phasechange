@@ -442,6 +442,9 @@
           digital: new InstrumentModel("digital", this.rng),
           thermocouple: new InstrumentModel("thermocouple", this.rng)
         };
+        // Teacher controls
+        this.idealizedLinearLiquid = false; // Default off; makes liquid heating near-linear
+        this.pressure_kPa = 101.3; // Default atmospheric pressure
         this.reset();
       }
       setSubstance(substance) {
@@ -464,12 +467,26 @@
       }
       step(dt, P_applied, hA, T_ambient, mass_kg, instrument_id) {
         this.mass_kg = mass_kg;
-        const { T_m, T_b, c_solid, c_liquid, c_gas } = this.substance;
+        let { T_m, T_b, c_solid, c_liquid, c_gas } = this.substance;
 
-        const P_noise = (this.rng.random() - 0.5) * 0.04 * P_applied;
+        // Dynamic boiling point for water based on pressure (Antoine equation)
+        if (this.substance.key === "water" && this.pressure_kPa !== 101.3) {
+          const P_mmHg = this.pressure_kPa * 7.50062;
+          const A = 8.07131, B = 1730.63, C = 233.426;
+          T_b = B / (A - Math.log10(P_mmHg)) - C;
+        }
+
+        // Idealized liquid heating: remove jitter and reduce losses in liquid phase
+        let P_noise = (this.rng.random() - 0.5) * 0.04 * P_applied;
+        let hA_actual = hA;
+        if (this.phase === "liquid" && this.idealizedLinearLiquid) {
+          P_noise = 0; // Remove heater jitter
+          hA_actual = hA * 0.05; // Scale heat losses to near zero for linear behavior
+        }
+
         const P_actual = Math.max(0, P_applied + P_noise);
         const Q_in = P_actual * dt;
-        const Q_loss = hA * (this.T_true_C - T_ambient) * dt;
+        const Q_loss = hA_actual * (this.T_true_C - T_ambient) * dt;
         const Q_net = Q_in - Q_loss;
         const heat_loss_W = Q_loss / dt;
         this.cumulative_heat_J += Q_in;
@@ -921,18 +938,19 @@
         const arr = [];
         const grid = Math.ceil(Math.sqrt(totalParticles));
         const spacingX = (w - 40) / grid;
-        const spacingY = (h - 40) / grid;
+        const spacingY = (h - 80) / grid;
         let count = 0;
+        const baseY = h - 60; // Start near bottom
         for (let i = 0; i < grid && count < totalParticles; i++) {
           for (let j = 0; j < grid && count < totalParticles; j++) {
             arr.push({
               x: 20 + i * spacingX + (Math.random() - 0.5) * 2,
-              y: 20 + j * spacingY + (Math.random() - 0.5) * 2,
+              y: baseY - j * spacingY + (Math.random() - 0.5) * 2,
               vx: 0,
               vy: 0,
               baseX: 20 + i * spacingX,
-              baseY: 20 + j * spacingY,
-              type: "solid"
+              baseY: baseY - j * spacingY,
+              type: "solid" // Persist type across frames
             });
             count++;
           }
@@ -948,6 +966,7 @@
         const ctx = canvas.getContext("2d");
         const w = canvas.width,
           h = canvas.height;
+        
         const loop = () => {
           animRef.current = requestAnimationFrame(loop);
           ctx.fillStyle = "#222";
@@ -956,86 +975,155 @@
           const { melt_fraction = 0, boil_fraction = 0 } = simState || {};
           const fracSolid = Math.max(0, 1 - melt_fraction);
           const fracGas = Math.max(0, boil_fraction);
+          const fracLiquid = 1 - fracSolid - fracGas;
+          
           let targetSolid = Math.round(totalParticles * fracSolid);
           let targetGas = Math.round(totalParticles * fracGas);
-          if (targetSolid + targetGas > totalParticles)
-            targetGas = Math.max(0, totalParticles - targetSolid);
+          let targetLiquid = totalParticles - targetSolid - targetGas;
 
           const parts = particlesRef.current;
-          // Start all as liquid for this frame, then assign solid and gas
-          parts.forEach((p) => (p.type = "liquid"));
-          // solids near bottom
-          parts.sort((a, b) => a.y - b.y);
-          for (let i = 0; i < targetSolid; i++) parts[i].type = "solid";
-          // gases near top
-          parts.sort((a, b) => b.y - a.y);
-          for (let i = 0; i < targetGas; i++) parts[i].type = "gas";
+          
+          // Count current types
+          let currentSolid = parts.filter(p => p.type === "solid").length;
+          let currentGas = parts.filter(p => p.type === "gas").length;
+          let currentLiquid = parts.filter(p => p.type === "liquid").length;
 
-          const liquidLevel = h * 0.7;
-          for (const p of parts) {
-            let fx = 0,
-              fy = 0;
-            const speedLimit = { solid: 1.5, liquid: 3, gas: 6 }[p.type];
+          // Gradually transition particles (max 2-3 per frame for smooth transitions)
+          const transitionRate = 2;
+          
+          // Melting: convert solids near interface (higher y) to liquid
+          if (currentSolid > targetSolid) {
+            const solids = parts.filter(p => p.type === "solid")
+              .sort((a, b) => b.y - a.y); // Top solids first
+            for (let i = 0; i < Math.min(transitionRate, currentSolid - targetSolid); i++) {
+              solids[i].type = "liquid";
+            }
+          } else if (currentSolid < targetSolid && currentLiquid > 0) {
+            // Freezing: convert liquids near bottom to solid
+            const liquids = parts.filter(p => p.type === "liquid")
+              .sort((a, b) => a.y - b.y); // Bottom liquids first
+            for (let i = 0; i < Math.min(transitionRate, targetSolid - currentSolid); i++) {
+              liquids[i].type = "solid";
+            }
+          }
 
+          // Boiling: convert liquids near top to gas
+          if (currentGas < targetGas && currentLiquid > 0) {
+            const liquids = parts.filter(p => p.type === "liquid")
+              .sort((a, b) => b.y - a.y); // Top liquids first
+            for (let i = 0; i < Math.min(transitionRate, targetGas - currentGas); i++) {
+              liquids[i].type = "gas";
+              liquids[i].vy = -2; // Give upward kick
+            }
+          } else if (currentGas > targetGas) {
+            // Condensing: convert gases near bottom to liquid
+            const gases = parts.filter(p => p.type === "gas")
+              .sort((a, b) => a.y - b.y); // Bottom gases first
+            for (let i = 0; i < Math.min(transitionRate, currentGas - targetGas); i++) {
+              gases[i].type = "liquid";
+            }
+          }
+
+          // Physics update with particle-particle interactions
+          for (let i = 0; i < parts.length; i++) {
+            const p = parts[i];
+            let fx = 0, fy = 0;
+
+            // Phase-specific forces
             if (p.type === "solid") {
+              // Spring back to lattice position with vibration
               fx += (p.baseX - p.x) * 0.15 + (Math.random() - 0.5) * 0.4;
               fy += (p.baseY - p.y) * 0.15 + (Math.random() - 0.5) * 0.4;
-              p.vx *= 0.85;
-              p.vy *= 0.85;
+              fy += 0.1; // Slight gravity
             } else if (p.type === "liquid") {
-              fx += (Math.random() - 0.5) * 0.6;
-              fy += (Math.random() - 0.5) * 0.6 + 0.15; // gravity
-              if (p.y > liquidLevel - 6) fy -= 0.2; // slight pressure near bottom
-              // weak cohesion
-              fx += (Math.random() - 0.5) * 0.1;
-              fy += (Math.random() - 0.5) * 0.1;
-              p.vx *= 0.94;
-              p.vy *= 0.94;
+              // Gravity and brownian motion
+              fx += (Math.random() - 0.5) * 0.8;
+              fy += (Math.random() - 0.5) * 0.8;
+              fy += 0.25; // Gravity
             } else {
-              // gas
-              fx += (Math.random() - 0.5) * 1.6;
-              fy += (Math.random() - 0.5) * 1.6 - 0.4; // buoyant upward
-              p.vx *= 0.985;
-              p.vy *= 0.985;
+              // gas: buoyancy (upward) and random motion
+              fx += (Math.random() - 0.5) * 2.0;
+              fy += (Math.random() - 0.5) * 2.0;
+              fy -= 0.3; // Buoyant (negative gravity)
             }
 
-            // integrate
-            p.vx += fx;
-            p.vy += fy;
-            const sp = Math.hypot(p.vx, p.vy);
-            if (sp > speedLimit) {
-              p.vx = (p.vx / sp) * speedLimit;
-              p.vy = (p.vy / sp) * speedLimit;
+            // Particle-particle interactions (soft-sphere + weak cohesion for liquids)
+            for (let j = i + 1; j < parts.length; j++) {
+              const p2 = parts[j];
+              const dx = p2.x - p.x;
+              const dy = p2.y - p.y;
+              const dist = Math.hypot(dx, dy);
+              
+              if (dist < 12 && dist > 0.1) {
+                // Soft repulsion at short range
+                const repulsion = (12 - dist) * 0.05;
+                const nx = dx / dist;
+                const ny = dy / dist;
+                fx -= nx * repulsion;
+                fy -= ny * repulsion;
+                p2.vx = (p2.vx || 0) + nx * repulsion * 0.5;
+                p2.vy = (p2.vy || 0) + ny * repulsion * 0.5;
+              }
+              
+              // Weak cohesion for liquid-liquid pairs
+              if (p.type === "liquid" && p2.type === "liquid" && dist < 20 && dist > 12) {
+                const cohesion = (dist - 12) * 0.002;
+                const nx = dx / dist;
+                const ny = dy / dist;
+                fx += nx * cohesion;
+                fy += ny * cohesion;
+              }
             }
+
+            // Apply forces to velocity
+            p.vx = (p.vx || 0) + fx;
+            p.vy = (p.vy || 0) + fy;
+
+            // Phase-appropriate damping and speed limits
+            let speedLimit, damping;
+            if (p.type === "solid") {
+              speedLimit = 1.5;
+              damping = 0.85;
+            } else if (p.type === "liquid") {
+              speedLimit = 3.5;
+              damping = 0.94;
+            } else {
+              speedLimit = 7;
+              damping = 0.985;
+            }
+
+            p.vx *= damping;
+            p.vy *= damping;
+
+            const speed = Math.hypot(p.vx, p.vy);
+            if (speed > speedLimit) {
+              p.vx = (p.vx / speed) * speedLimit;
+              p.vy = (p.vy / speed) * speedLimit;
+            }
+
+            // Update position
             p.x += p.vx;
             p.y += p.vy;
 
-            // boundaries
+            // Soft wall/floor boundaries
             if (p.x < 8) {
               p.x = 8;
-              p.vx *= -0.6;
+              p.vx *= -0.5;
             }
             if (p.x > w - 8) {
               p.x = w - 8;
-              p.vx *= -0.6;
+              p.vx *= -0.5;
             }
             if (p.y < 8) {
               p.y = 8;
-              p.vy *= -0.6;
+              p.vy *= -0.5;
             }
-            if (p.type !== "gas") {
-              if (p.y > h - 10) {
-                p.y = h - 10;
-                p.vy *= -0.4;
-              }
-            } else {
-              if (p.y > h - 8) {
-                p.y = h - 8;
-                p.vy *= -0.2;
-              }
+            if (p.y > h - 10) {
+              p.y = h - 10;
+              p.vy *= (p.type === "gas" ? -0.2 : -0.4);
             }
 
-            // draw
+            // Draw particle
             let color = "#7fbfff";
             if (p.type === "solid") color = "#bfe8ff";
             if (p.type === "gas") color = "#ddd";
@@ -1045,6 +1133,7 @@
             ctx.fill();
           }
         };
+        
         animRef.current = requestAnimationFrame(loop);
         return () => {
           if (animRef.current) cancelAnimationFrame(animRef.current);
@@ -1221,6 +1310,80 @@
       );
     }
 
+    function TeacherControls({
+      timeScale,
+      setTimeScale,
+      pressure_kPa,
+      setPressure_kPa,
+      idealizedLiquid,
+      setIdealizedLiquid,
+      isRunning
+    }) {
+      return (
+        <div className="teacher-controls">
+          <h3>Advanced Controls <span className="badge">teacher</span></h3>
+          
+          <div className="control-group">
+            <label htmlFor="timeScale">
+              Simulation Speed: {timeScale.toFixed(1)}×
+            </label>
+            <input
+              type="range"
+              id="timeScale"
+              name="timeScale"
+              min="0.5"
+              max="5"
+              step="0.5"
+              value={timeScale}
+              onChange={(e) => setTimeScale(parseFloat(e.target.value))}
+              disabled={isRunning}
+            />
+            <div className="hint">
+              Speed up or slow down the simulation (0.5×–5×)
+            </div>
+          </div>
+
+          <div className="control-group">
+            <label htmlFor="pressure">
+              Air Pressure: {pressure_kPa.toFixed(1)} kPa
+            </label>
+            <input
+              type="range"
+              id="pressure"
+              name="pressure"
+              min="60"
+              max="110"
+              step="1"
+              value={pressure_kPa}
+              onChange={(e) => setPressure_kPa(parseFloat(e.target.value))}
+              disabled={isRunning}
+            />
+            <div className="hint">
+              Affects boiling point of water (60–110 kPa)
+            </div>
+          </div>
+
+          <div className="control-group">
+            <label htmlFor="idealizedLiquid">
+              <input
+                type="checkbox"
+                id="idealizedLiquid"
+                name="idealizedLiquid"
+                checked={idealizedLiquid}
+                onChange={(e) => setIdealizedLiquid(e.target.checked)}
+                disabled={isRunning}
+                style={{ width: "auto", marginRight: "8px" }}
+              />
+              Idealized liquid heating (straighter line)
+            </label>
+            <div className="hint">
+              Removes heater jitter and reduces heat loss in liquid phase for clearer plateaus
+            </div>
+          </div>
+        </div>
+      );
+    }
+
     // --- APP ---
     function App() {
       const [settings, setSettings] = useState(() => {
@@ -1241,6 +1404,11 @@
       const [simState, setSimState] = useState(sim.getState());
       const [analysis, setAnalysis] = useState("");
       const intervalRef = useRef(null);
+
+      // Teacher controls
+      const [timeScale, setTimeScale] = useState(1.0); // Simulation speed multiplier
+      const [pressure_kPa, setPressure_kPa] = useState(101.3);
+      const [idealizedLiquid, setIdealizedLiquid] = useState(false);
 
       // Teacher lock for graph (default locked; URL ?key=... unlocks)
       const [graphUnlocked, setGraphUnlocked] = useState(() => {
@@ -1287,11 +1455,15 @@
         if (isRunning) return;
         setIsRunning(true);
 
-        const baseLoss = 8; // W/K baseline
+        const baseLoss = 6; // W/K baseline (lowered from 8 for realistic boiling at 500W)
         const lossFactor = Number(settings.insulation);
         const hA = baseLoss * lossFactor;
         const dt = 0.1;
         const mass_kg = settings.mass / 1000;
+
+        // Apply teacher controls to engine
+        sim.idealizedLinearLiquid = idealizedLiquid;
+        sim.pressure_kPa = pressure_kPa;
 
         sim.logger.setMetadata({
           substance: Substances[settings.substanceKey].name,
@@ -1300,12 +1472,16 @@
           ambient_C: settings.T_ambient,
           heater_power_W: settings.power,
           insulation_factor: lossFactor,
-          seed: settings.seed || "(none)"
+          seed: settings.seed || "(none)",
+          pressure_kPa: pressure_kPa,
+          idealized_liquid: idealizedLiquid,
+          time_scale: timeScale
         });
 
         intervalRef.current = setInterval(() => {
+          const dt_sim = dt * timeScale; // Apply time scale
           const state = sim.step(
-            dt,
+            dt_sim,
             settings.power,
             hA,
             settings.T_ambient,
@@ -1409,6 +1585,15 @@
               </div>
             ) : (
               <>
+                <TeacherControls
+                  timeScale={timeScale}
+                  setTimeScale={setTimeScale}
+                  pressure_kPa={pressure_kPa}
+                  setPressure_kPa={setPressure_kPa}
+                  idealizedLiquid={idealizedLiquid}
+                  setIdealizedLiquid={setIdealizedLiquid}
+                  isRunning={isRunning}
+                />
                 <GraphView logger={sim.logger} graphType={graphType} />
                 <DataAndAnalysis
                   logger={sim.logger}
