@@ -256,6 +256,7 @@
         L_f: 334000,
         L_v: 2256000,
         density_liquid: 1000,
+        density_solid: 917, // Ice floats in water
         solidFloats: true
       },
       ethanol: {
@@ -269,6 +270,7 @@
         L_f: 108000,
         L_v: 846000,
         density_liquid: 789,
+        density_solid: 828, // 1.05 * density_liquid
         solidFloats: false
       },
       acetone: {
@@ -282,6 +284,7 @@
         L_f: 100000,
         L_v: 518000,
         density_liquid: 785,
+        density_solid: 824, // 1.05 * density_liquid
         solidFloats: false
       },
       mercury: {
@@ -295,6 +298,7 @@
         L_f: 11400,
         L_v: 294000,
         density_liquid: 13595,
+        density_solid: 14275, // 1.05 * density_liquid
         solidFloats: false
       },
       gallium: {
@@ -308,6 +312,7 @@
         L_f: 80000,
         L_v: 2560000,
         density_liquid: 6095,
+        density_solid: 5910, // Gallium expands when freezing (like water/ice)
         solidFloats: true
       },
       sodium_chloride: {
@@ -321,6 +326,7 @@
         L_f: 492000,
         L_v: 4770000,
         density_liquid: 1500,
+        density_solid: 1575, // 1.05 * density_liquid
         solidFloats: false
       },
       butter: {
@@ -334,6 +340,7 @@
         L_f: 180000,
         L_v: 700000,
         density_liquid: 911,
+        density_solid: 957, // 1.05 * density_liquid
         solidFloats: false
       }
     };
@@ -614,7 +621,8 @@
       onStop,
       onReset,
       isRunning,
-      solidFloats
+      solidFloats,
+      hideSubstance
     }) {
       const handleChange = (e) => {
         const { name, value, type } = e.target;
@@ -663,21 +671,34 @@
 
           <div className="control-group">
             <label htmlFor="substanceKey">Substance</label>
-            <select
-              id="substanceKey"
-              name="substanceKey"
-              value={settings.substanceKey}
-              onChange={handleChange}
-              disabled={isRunning}
-            >
-              <option value="water">Water</option>
-              <option value="ethanol">Ethanol</option>
-              <option value="acetone">Acetone</option>
-              <option value="mercury">Mercury</option>
-              <option value="gallium">Gallium</option>
-              <option value="sodium_chloride">Sodium Chloride</option>
-              <option value="butter">Butter</option>
-            </select>
+            {hideSubstance ? (
+              <div style={{ 
+                padding: "6px 8px", 
+                background: "#f0f0f0", 
+                border: "1px solid #ccc", 
+                borderRadius: "4px",
+                color: "#666",
+                fontStyle: "italic"
+              }}>
+                Unknown (hidden by teacher)
+              </div>
+            ) : (
+              <select
+                id="substanceKey"
+                name="substanceKey"
+                value={settings.substanceKey}
+                onChange={handleChange}
+                disabled={isRunning}
+              >
+                <option value="water">Water</option>
+                <option value="ethanol">Ethanol</option>
+                <option value="acetone">Acetone</option>
+                <option value="mercury">Mercury</option>
+                <option value="gallium">Gallium</option>
+                <option value="sodium_chloride">Sodium Chloride</option>
+                <option value="butter">Butter</option>
+              </select>
+            )}
             <div className="hint">
               Solid floats: <strong>{solidFloats ? "Yes" : "No"}</strong>
             </div>
@@ -756,11 +777,29 @@
               onChange={handleChange}
             />
           </div>
+
+          <div className="control-group">
+            <label htmlFor="pressure_kPa">Air Pressure: {settings.pressure_kPa} kPa</label>
+            <input
+              type="range"
+              id="pressure_kPa"
+              name="pressure_kPa"
+              min="60"
+              max="110"
+              step="1"
+              value={settings.pressure_kPa}
+              onChange={handleChange}
+              disabled={isRunning}
+            />
+            <div className="hint">
+              Affects boiling point of water (60–110 kPa, default 101.3)
+            </div>
+          </div>
         </div>
       );
     }
 
-    function MacroView({ simState, solidFloats, displayTemps }) {
+    function MacroView({ simState, solidFloats, displayTemps, substance, mass_kg }) {
       const canvasRef = useRef(null);
       const T_trueDisp = useMemo(
         () =>
@@ -778,7 +817,7 @@
       );
 
       useEffect(() => {
-        if (!canvasRef.current || !simState) return;
+        if (!canvasRef.current || !simState || !substance) return;
         const { melt_fraction, boil_fraction } = simState;
         const canvas = canvasRef.current;
         const ctx = canvas.getContext("2d");
@@ -803,34 +842,54 @@
         ctx.lineTo(beakerX + beakerW, beakerY);
         ctx.stroke();
 
-        const contentH = beakerH * 0.8;
-        const fracSolid = Math.max(0, 1 - melt_fraction);
-        const fracLiquid = Math.max(0, melt_fraction - boil_fraction);
-        const fracGas = Math.max(0, boil_fraction);
-        const liquidH = contentH * fracLiquid;
-        const solidH = contentH * fracSolid;
-        const contentY = beakerBottom - contentH;
-
-        if (liquidH > 1) {
+        // Density-aware fill calculation
+        const melted_mass_kg = melt_fraction * mass_kg;
+        const boiled_mass_kg = boil_fraction * mass_kg;
+        const solid_mass_kg = mass_kg - melted_mass_kg;
+        
+        const density_liquid = substance.density_liquid;
+        const density_solid = substance.density_solid || (density_liquid * 1.05);
+        
+        // Volumes
+        const V_liq = Math.max(0, melted_mass_kg - boiled_mass_kg) / density_liquid;
+        const V_sol = solid_mass_kg / density_solid;
+        
+        // Submerged fraction for solids (ice floats in water)
+        const f_sub = Math.min(1, density_solid / density_liquid);
+        
+        // Displayed fill volume
+        const V_fill = V_liq + f_sub * V_sol;
+        
+        // Convert volume to height using constant beaker cross-section
+        const beakerCrossSection = beakerW * 1.0; // Simplified: width as representative area
+        const fillHeight = Math.min(beakerH * 0.8, (V_fill * 1e6) / (beakerCrossSection * 10)); // Scale factor for display
+        
+        // Render liquid
+        if (V_liq > 0.000001) {
           ctx.fillStyle = "rgba(0, 120, 220, 0.65)";
+          const liquidH = (V_liq / V_fill) * fillHeight;
           ctx.fillRect(beakerX, beakerBottom - liquidH, beakerW, liquidH);
         }
-        if (solidH > 1) {
+        
+        // Render solid
+        if (V_sol > 0.000001) {
           ctx.fillStyle = "rgba(173, 216, 230, 0.9)";
-          const blockH = Math.min(solidH, contentH * 0.5);
+          const solidH = (V_sol * f_sub / V_fill) * fillHeight;
           const solidY = solidFloats
-            ? Math.max(beakerY + 8, beakerBottom - liquidH - blockH - 4)
-            : beakerBottom - blockH;
-          ctx.fillRect(beakerX + 6, solidY, beakerW - 12, blockH);
+            ? Math.max(beakerY + 8, beakerBottom - fillHeight)
+            : beakerBottom - solidH;
+          ctx.fillRect(beakerX + 6, solidY, beakerW - 12, solidH);
           ctx.strokeStyle = "#9ecde6";
-          ctx.strokeRect(beakerX + 6, solidY, beakerW - 12, blockH);
+          ctx.strokeRect(beakerX + 6, solidY, beakerW - 12, solidH);
         }
-        if (fracGas > 0.01) {
+        
+        // Render gas plume
+        if (boil_fraction > 0.01) {
           ctx.fillStyle = "rgba(180,180,180,0.35)";
-          const plumeCount = Math.min(60, Math.floor(15 + fracGas * 80));
+          const plumeCount = Math.min(60, Math.floor(15 + boil_fraction * 80));
           for (let i = 0; i < plumeCount; i++) {
             const x = beakerX + Math.random() * beakerW;
-            const y = contentY - Math.random() * 24;
+            const y = beakerY + beakerH * 0.1 - Math.random() * 24;
             const r = 2 + Math.random() * 4;
             ctx.beginPath();
             ctx.arc(x, y, r, 0, Math.PI * 2);
@@ -867,11 +926,11 @@
         ctx.strokeStyle = "#fff";
         ctx.setLineDash([4, 4]);
         ctx.beginPath();
-        ctx.moveTo(beakerX, beakerBottom - liquidH);
-        ctx.lineTo(beakerX + beakerW, beakerBottom - liquidH);
+        ctx.moveTo(beakerX, beakerBottom - fillHeight);
+        ctx.lineTo(beakerX + beakerW, beakerBottom - fillHeight);
         ctx.stroke();
         ctx.setLineDash([]);
-      }, [simState, solidFloats, T_measDisp]);
+      }, [simState, solidFloats, T_measDisp, substance, mass_kg]);
 
       return (
         <>
@@ -928,7 +987,7 @@
       const canvasRef = useRef(null);
       const particlesRef = useRef([]);
       const animRef = useRef(null);
-      const totalParticles = 70;
+      const totalParticles = 200; // Increased from 70
 
       // Initialize particles arranged initially as a lattice (solid)
       useEffect(() => {
@@ -967,6 +1026,11 @@
         const w = canvas.width,
           h = canvas.height;
         
+        // Simple cell list for neighbor search optimization
+        const cellSize = 25;
+        const gridCols = Math.ceil(w / cellSize);
+        const gridRows = Math.ceil(h / cellSize);
+        
         const loop = () => {
           animRef.current = requestAnimationFrame(loop);
           ctx.fillStyle = "#222";
@@ -989,7 +1053,7 @@
           let currentLiquid = parts.filter(p => p.type === "liquid").length;
 
           // Gradually transition particles (max 2-3 per frame for smooth transitions)
-          const transitionRate = 2;
+          const transitionRate = 3;
           
           // Melting: convert solids near interface (higher y) to liquid
           if (currentSolid > targetSolid) {
@@ -1013,7 +1077,7 @@
               .sort((a, b) => b.y - a.y); // Top liquids first
             for (let i = 0; i < Math.min(transitionRate, targetGas - currentGas); i++) {
               liquids[i].type = "gas";
-              liquids[i].vy = -2; // Give upward kick
+              liquids[i].vy = -3; // Give upward kick
             }
           } else if (currentGas > targetGas) {
             // Condensing: convert gases near bottom to liquid
@@ -1021,6 +1085,19 @@
               .sort((a, b) => a.y - b.y); // Bottom gases first
             for (let i = 0; i < Math.min(transitionRate, currentGas - targetGas); i++) {
               gases[i].type = "liquid";
+            }
+          }
+
+          // Build cell list for efficient neighbor search
+          const cells = Array.from({ length: gridRows }, () => 
+            Array.from({ length: gridCols }, () => [])
+          );
+          
+          for (const p of parts) {
+            const cellX = Math.floor(p.x / cellSize);
+            const cellY = Math.floor(p.y / cellSize);
+            if (cellX >= 0 && cellX < gridCols && cellY >= 0 && cellY < gridRows) {
+              cells[cellY][cellX].push(p);
             }
           }
 
@@ -1032,46 +1109,57 @@
             // Phase-specific forces
             if (p.type === "solid") {
               // Spring back to lattice position with vibration
-              fx += (p.baseX - p.x) * 0.15 + (Math.random() - 0.5) * 0.4;
-              fy += (p.baseY - p.y) * 0.15 + (Math.random() - 0.5) * 0.4;
-              fy += 0.1; // Slight gravity
+              fx += (p.baseX - p.x) * 0.2 + (Math.random() - 0.5) * 0.3;
+              fy += (p.baseY - p.y) * 0.2 + (Math.random() - 0.5) * 0.3;
+              fy += 0.15; // Slight gravity
             } else if (p.type === "liquid") {
               // Gravity and brownian motion
-              fx += (Math.random() - 0.5) * 0.8;
-              fy += (Math.random() - 0.5) * 0.8;
-              fy += 0.25; // Gravity
+              fx += (Math.random() - 0.5) * 0.6;
+              fy += (Math.random() - 0.5) * 0.6;
+              fy += 0.35; // Gravity
             } else {
               // gas: buoyancy (upward) and random motion
-              fx += (Math.random() - 0.5) * 2.0;
-              fy += (Math.random() - 0.5) * 2.0;
-              fy -= 0.3; // Buoyant (negative gravity)
+              fx += (Math.random() - 0.5) * 1.5;
+              fy += (Math.random() - 0.5) * 1.5;
+              fy -= 0.25; // Buoyant (negative gravity)
             }
 
-            // Particle-particle interactions (soft-sphere + weak cohesion for liquids)
-            for (let j = i + 1; j < parts.length; j++) {
-              const p2 = parts[j];
-              const dx = p2.x - p.x;
-              const dy = p2.y - p.y;
-              const dist = Math.hypot(dx, dy);
-              
-              if (dist < 12 && dist > 0.1) {
-                // Soft repulsion at short range
-                const repulsion = (12 - dist) * 0.05;
-                const nx = dx / dist;
-                const ny = dy / dist;
-                fx -= nx * repulsion;
-                fy -= ny * repulsion;
-                p2.vx = (p2.vx || 0) + nx * repulsion * 0.5;
-                p2.vy = (p2.vy || 0) + ny * repulsion * 0.5;
-              }
-              
-              // Weak cohesion for liquid-liquid pairs
-              if (p.type === "liquid" && p2.type === "liquid" && dist < 20 && dist > 12) {
-                const cohesion = (dist - 12) * 0.002;
-                const nx = dx / dist;
-                const ny = dy / dist;
-                fx += nx * cohesion;
-                fy += ny * cohesion;
+            // Particle-particle interactions using cell list
+            const cellX = Math.floor(p.x / cellSize);
+            const cellY = Math.floor(p.y / cellSize);
+            
+            // Check neighboring cells
+            for (let dy = -1; dy <= 1; dy++) {
+              for (let dx = -1; dx <= 1; dx++) {
+                const nx = cellX + dx;
+                const ny = cellY + dy;
+                if (nx >= 0 && nx < gridCols && ny >= 0 && ny < gridRows) {
+                  for (const p2 of cells[ny][nx]) {
+                    if (p === p2) continue;
+                    
+                    const dx2 = p2.x - p.x;
+                    const dy2 = p2.y - p.y;
+                    const dist = Math.hypot(dx2, dy2);
+                    
+                    if (dist < 10 && dist > 0.1) {
+                      // Soft repulsion at short range
+                      const repulsion = (10 - dist) * 0.08;
+                      const nx2 = dx2 / dist;
+                      const ny2 = dy2 / dist;
+                      fx -= nx2 * repulsion;
+                      fy -= ny2 * repulsion;
+                    }
+                    
+                    // Weak cohesion for liquid-liquid pairs
+                    if (p.type === "liquid" && p2.type === "liquid" && dist < 18 && dist > 10) {
+                      const cohesion = (dist - 10) * 0.004;
+                      const nx2 = dx2 / dist;
+                      const ny2 = dy2 / dist;
+                      fx += nx2 * cohesion;
+                      fy += ny2 * cohesion;
+                    }
+                  }
+                }
               }
             }
 
@@ -1082,13 +1170,13 @@
             // Phase-appropriate damping and speed limits
             let speedLimit, damping;
             if (p.type === "solid") {
-              speedLimit = 1.5;
-              damping = 0.85;
+              speedLimit = 1.2;
+              damping = 0.82;
             } else if (p.type === "liquid") {
-              speedLimit = 3.5;
-              damping = 0.94;
+              speedLimit = 3.0;
+              damping = 0.93;
             } else {
-              speedLimit = 7;
+              speedLimit = 6;
               damping = 0.985;
             }
 
@@ -1101,35 +1189,44 @@
               p.vy = (p.vy / speed) * speedLimit;
             }
 
-            // Update position
+            // Update position (semi-implicit Euler)
             p.x += p.vx;
             p.y += p.vy;
 
             // Soft wall/floor boundaries
-            if (p.x < 8) {
-              p.x = 8;
-              p.vx *= -0.5;
+            if (p.x < 6) {
+              p.x = 6;
+              p.vx *= -0.4;
             }
-            if (p.x > w - 8) {
-              p.x = w - 8;
-              p.vx *= -0.5;
+            if (p.x > w - 6) {
+              p.x = w - 6;
+              p.vx *= -0.4;
             }
-            if (p.y < 8) {
-              p.y = 8;
-              p.vy *= -0.5;
+            if (p.y < 6) {
+              p.y = 6;
+              p.vy *= -0.4;
             }
-            if (p.y > h - 10) {
-              p.y = h - 10;
-              p.vy *= (p.type === "gas" ? -0.2 : -0.4);
+            if (p.y > h - 8) {
+              p.y = h - 8;
+              p.vy *= (p.type === "gas" ? -0.3 : -0.5);
             }
 
             // Draw particle
             let color = "#7fbfff";
-            if (p.type === "solid") color = "#bfe8ff";
-            if (p.type === "gas") color = "#ddd";
+            let radius = 3.5;
+            if (p.type === "solid") {
+              color = "#bfe8ff";
+              radius = 3.5;
+            } else if (p.type === "gas") {
+              color = "#ddd";
+              radius = 3.0;
+            } else {
+              color = "#5da9ff";
+              radius = 3.8;
+            }
             ctx.fillStyle = color;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, 4.5, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
             ctx.fill();
           }
         };
@@ -1313,11 +1410,11 @@
     function TeacherControls({
       timeScale,
       setTimeScale,
-      pressure_kPa,
-      setPressure_kPa,
       idealizedLiquid,
       setIdealizedLiquid,
-      isRunning
+      isRunning,
+      onShareScenario,
+      onOpenInNewTab
     }) {
       return (
         <div className="teacher-controls">
@@ -1344,26 +1441,6 @@
           </div>
 
           <div className="control-group">
-            <label htmlFor="pressure">
-              Air Pressure: {pressure_kPa.toFixed(1)} kPa
-            </label>
-            <input
-              type="range"
-              id="pressure"
-              name="pressure"
-              min="60"
-              max="110"
-              step="1"
-              value={pressure_kPa}
-              onChange={(e) => setPressure_kPa(parseFloat(e.target.value))}
-              disabled={isRunning}
-            />
-            <div className="hint">
-              Affects boiling point of water (60–110 kPa)
-            </div>
-          </div>
-
-          <div className="control-group">
             <label htmlFor="idealizedLiquid">
               <input
                 type="checkbox"
@@ -1380,6 +1457,27 @@
               Removes heater jitter and reduces heat loss in liquid phase for clearer plateaus
             </div>
           </div>
+
+          <div style={{ marginTop: "20px", paddingTop: "15px", borderTop: "1px solid #ddd" }}>
+            <h4 style={{ marginTop: 0, fontSize: "1rem" }}>Share Scenario</h4>
+            <div className="hint" style={{ marginBottom: "10px" }}>
+              Create a shareable link that captures all current settings
+            </div>
+            <div className="button-group">
+              <button
+                onClick={onShareScenario}
+                style={{ backgroundColor: "#17a2b8", color: "white" }}
+              >
+                Copy Link
+              </button>
+              <button
+                onClick={onOpenInNewTab}
+                style={{ backgroundColor: "#6c757d", color: "white" }}
+              >
+                Open in Tab
+              </button>
+            </div>
+          </div>
         </div>
       );
     }
@@ -1390,25 +1488,37 @@
         const params = new URLSearchParams(window.location.search);
         return {
           seed: params.get("seed") ?? "",
-          substanceKey: "water",
-          mass: 50,
-          power: 200,
-          instrument: "digital",
-          insulation: 0.4,
-          T_ambient: 20
+          substanceKey: params.get("substanceKey") ?? "water",
+          mass: parseFloat(params.get("mass")) || 50,
+          power: parseFloat(params.get("power")) || 200,
+          instrument: params.get("instrument") ?? "digital",
+          insulation: parseFloat(params.get("insulation")) || 0.4,
+          T_ambient: parseFloat(params.get("T_ambient")) || 20,
+          pressure_kPa: parseFloat(params.get("pressure_kPa")) || 101.3
         };
       });
       const [isRunning, setIsRunning] = useState(false);
       const [graphType, setGraphType] = useState("heat");
-      const [sim, setSim] = useState(() => new PhysicsEngine(Substances["water"], ""));
+      const [sim, setSim] = useState(() => new PhysicsEngine(Substances[settings.substanceKey], settings.seed));
       const [simState, setSimState] = useState(sim.getState());
       const [analysis, setAnalysis] = useState("");
       const intervalRef = useRef(null);
 
       // Teacher controls
-      const [timeScale, setTimeScale] = useState(1.0); // Simulation speed multiplier
-      const [pressure_kPa, setPressure_kPa] = useState(101.3);
-      const [idealizedLiquid, setIdealizedLiquid] = useState(false);
+      const [timeScale, setTimeScale] = useState(() => {
+        const params = new URLSearchParams(window.location.search);
+        return parseFloat(params.get("timeScale")) || 1.0;
+      });
+      const [idealizedLiquid, setIdealizedLiquid] = useState(() => {
+        const params = new URLSearchParams(window.location.search);
+        return params.get("idealizedLinearLiquid") === "true";
+      });
+      
+      // Hide substance mode for student exploration
+      const [hideSubstance, setHideSubstance] = useState(() => {
+        const params = new URLSearchParams(window.location.search);
+        return params.get("hideSubstance") === "true";
+      });
 
       // Teacher lock for graph (default locked; URL ?key=... unlocks)
       const [graphUnlocked, setGraphUnlocked] = useState(() => {
@@ -1463,7 +1573,7 @@
 
         // Apply teacher controls to engine
         sim.idealizedLinearLiquid = idealizedLiquid;
-        sim.pressure_kPa = pressure_kPa;
+        sim.pressure_kPa = settings.pressure_kPa;
 
         sim.logger.setMetadata({
           substance: Substances[settings.substanceKey].name,
@@ -1473,7 +1583,7 @@
           heater_power_W: settings.power,
           insulation_factor: lossFactor,
           seed: settings.seed || "(none)",
-          pressure_kPa: pressure_kPa,
+          pressure_kPa: settings.pressure_kPa,
           idealized_liquid: idealizedLiquid,
           time_scale: timeScale
         });
@@ -1538,7 +1648,44 @@
         else alert("Incorrect password");
       };
 
+      const generateShareURL = () => {
+        const params = new URLSearchParams();
+        params.set("substanceKey", settings.substanceKey);
+        params.set("mass", settings.mass.toString());
+        params.set("power", settings.power.toString());
+        params.set("instrument", settings.instrument);
+        params.set("insulation", settings.insulation.toString());
+        params.set("T_ambient", settings.T_ambient.toString());
+        params.set("pressure_kPa", settings.pressure_kPa.toString());
+        params.set("timeScale", timeScale.toString());
+        params.set("idealizedLinearLiquid", idealizedLiquid.toString());
+        if (settings.seed) {
+          params.set("seed", settings.seed);
+        }
+        if (hideSubstance) {
+          params.set("hideSubstance", "true");
+        }
+        const baseURL = window.location.origin + window.location.pathname;
+        return `${baseURL}?${params.toString()}`;
+      };
+
+      const onShareScenario = () => {
+        const url = generateShareURL();
+        navigator.clipboard.writeText(url).then(() => {
+          alert("Link copied to clipboard!");
+        }).catch(() => {
+          alert("Failed to copy. URL:\n" + url);
+        });
+      };
+
+      const onOpenInNewTab = () => {
+        const url = generateShareURL();
+        window.open(url, "_blank");
+      };
+
       const solidFloats = Substances[settings.substanceKey].solidFloats;
+      const substance = Substances[settings.substanceKey];
+      const mass_kg = settings.mass / 1000;
 
       return (
         <div className="app-container">
@@ -1550,12 +1697,15 @@
             onReset={reset}
             isRunning={isRunning}
             solidFloats={solidFloats}
+            hideSubstance={hideSubstance}
           />
           <div className="panel center-panel">
             <MacroView
               simState={simState}
               solidFloats={solidFloats}
               displayTemps={{ T_true: displayTrue, T_measured: displayMeasured }}
+              substance={substance}
+              mass_kg={mass_kg}
             />
             <AtomicView simState={simState} />
           </div>
@@ -1588,11 +1738,11 @@
                 <TeacherControls
                   timeScale={timeScale}
                   setTimeScale={setTimeScale}
-                  pressure_kPa={pressure_kPa}
-                  setPressure_kPa={setPressure_kPa}
                   idealizedLiquid={idealizedLiquid}
                   setIdealizedLiquid={setIdealizedLiquid}
                   isRunning={isRunning}
+                  onShareScenario={onShareScenario}
+                  onOpenInNewTab={onOpenInNewTab}
                 />
                 <GraphView logger={sim.logger} graphType={graphType} />
                 <DataAndAnalysis
