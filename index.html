@@ -613,6 +613,20 @@
       return smoothed;
     }
 
+    // Constants for macroscopic view density calculations
+    const DEFAULT_SOLID_DENSITY_MULTIPLIER = 1.05; // Typical solid is 5% denser than liquid
+    const BEAKER_CROSS_SECTION_SCALE = 1.0; // Representative area scaling
+    const VOLUME_TO_ML = 1e6; // Convert m³ to mL
+    const HEIGHT_SCALE_FACTOR = 10; // Scale volume to display height
+
+    // Constants for atomic view physics
+    const CELL_SIZE = 25; // Cell size for spatial grid (affects performance)
+    const REPULSION_DISTANCE = 10; // Distance for particle repulsion
+    const COHESION_MIN_DISTANCE = 10; // Minimum distance for liquid cohesion
+    const COHESION_MAX_DISTANCE = 18; // Maximum distance for liquid cohesion
+    const MIN_INTERACTION_DISTANCE = 0.1; // Minimum distance to avoid division by zero
+    const PARTICLES_TRANSITION_RATE = 3; // Max particles transitioning phase per frame
+
     // --- REACT COMPONENTS ---
     function Controls({
       settings,
@@ -817,7 +831,7 @@
       );
 
       useEffect(() => {
-        if (!canvasRef.current || !simState || !substance) return;
+        if (!canvasRef.current || !simState) return;
         const { melt_fraction, boil_fraction } = simState;
         const canvas = canvasRef.current;
         const ctx = canvas.getContext("2d");
@@ -838,11 +852,11 @@
         ctx.beginPath();
         ctx.moveTo(beakerX, beakerY);
         ctx.lineTo(beakerX, beakerBottom);
+        ctx.lineTo(beakerX + beakerW, beakerBottom);
         ctx.lineTo(beakerX + beakerW, beakerY);
         ctx.stroke();
 
         // Density-aware fill calculation
-        const DEFAULT_SOLID_DENSITY_MULTIPLIER = 1.05; // Typical solid is 5% denser than liquid
         const melted_mass_kg = melt_fraction * mass_kg;
         const boiled_mass_kg = boil_fraction * mass_kg;
         const solid_mass_kg = mass_kg - melted_mass_kg;
@@ -861,9 +875,6 @@
         const V_fill = V_liq + f_sub * V_sol;
         
         // Convert volume to height using constant beaker cross-section
-        const BEAKER_CROSS_SECTION_SCALE = 1.0; // Representative area scaling
-        const VOLUME_TO_ML = 1e6; // Convert m³ to mL
-        const HEIGHT_SCALE_FACTOR = 10; // Scale volume to display height
         const beakerCrossSection = beakerW * BEAKER_CROSS_SECTION_SCALE;
         const fillHeight = Math.min(beakerH * 0.8, (V_fill * VOLUME_TO_ML) / (beakerCrossSection * HEIGHT_SCALE_FACTOR));
         
@@ -1029,13 +1040,6 @@
         const w = canvas.width,
           h = canvas.height;
         
-        // Physics constants for spatial partitioning and interactions
-        const CELL_SIZE = 25; // Cell size for spatial grid (affects performance)
-        const REPULSION_DISTANCE = 10; // Distance for particle repulsion
-        const COHESION_MIN_DISTANCE = 10; // Minimum distance for liquid cohesion
-        const COHESION_MAX_DISTANCE = 18; // Maximum distance for liquid cohesion
-        const MIN_INTERACTION_DISTANCE = 0.1; // Minimum distance to avoid division by zero
-        
         const gridCols = Math.ceil(w / CELL_SIZE);
         const gridRows = Math.ceil(h / CELL_SIZE);
         
@@ -1060,21 +1064,19 @@
           let currentGas = parts.filter(p => p.type === "gas").length;
           let currentLiquid = parts.filter(p => p.type === "liquid").length;
 
-          // Gradually transition particles (max 2-3 per frame for smooth transitions)
-          const transitionRate = 3;
-          
+          // Gradually transition particles for smooth phase changes
           // Melting: convert solids near interface (higher y) to liquid
           if (currentSolid > targetSolid) {
             const solids = parts.filter(p => p.type === "solid")
               .sort((a, b) => b.y - a.y); // Top solids first
-            for (let i = 0; i < Math.min(transitionRate, currentSolid - targetSolid); i++) {
+            for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, currentSolid - targetSolid); i++) {
               solids[i].type = "liquid";
             }
           } else if (currentSolid < targetSolid && currentLiquid > 0) {
             // Freezing: convert liquids near bottom to solid
             const liquids = parts.filter(p => p.type === "liquid")
               .sort((a, b) => a.y - b.y); // Bottom liquids first
-            for (let i = 0; i < Math.min(transitionRate, targetSolid - currentSolid); i++) {
+            for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, targetSolid - currentSolid); i++) {
               liquids[i].type = "solid";
             }
           }
@@ -1083,7 +1085,7 @@
           if (currentGas < targetGas && currentLiquid > 0) {
             const liquids = parts.filter(p => p.type === "liquid")
               .sort((a, b) => b.y - a.y); // Top liquids first
-            for (let i = 0; i < Math.min(transitionRate, targetGas - currentGas); i++) {
+            for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, targetGas - currentGas); i++) {
               liquids[i].type = "gas";
               liquids[i].vy = -3; // Give upward kick
             }
@@ -1091,7 +1093,7 @@
             // Condensing: convert gases near bottom to liquid
             const gases = parts.filter(p => p.type === "gas")
               .sort((a, b) => a.y - b.y); // Bottom gases first
-            for (let i = 0; i < Math.min(transitionRate, currentGas - targetGas); i++) {
+            for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, currentGas - targetGas); i++) {
               gases[i].type = "liquid";
             }
           }
