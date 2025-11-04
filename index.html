@@ -615,9 +615,7 @@
 
     // Constants for macroscopic view density calculations
     const DEFAULT_SOLID_DENSITY_MULTIPLIER = 1.05; // Typical solid is 5% denser than liquid
-    const BEAKER_CROSS_SECTION_SCALE = 1.0; // Representative area scaling
-    const VOLUME_TO_ML = 1e6; // Convert m³ to mL
-    const HEIGHT_SCALE_FACTOR = 10; // Scale volume to display height
+    const BEAKER_VOLUME_TO_HEIGHT_SCALE = 1.5e6; // Calibrated factor to scale m³ to pixel height
 
     // Constants for atomic view physics
     const CELL_SIZE = 25; // Cell size for spatial grid (affects performance)
@@ -874,9 +872,8 @@
         // Displayed fill volume
         const V_fill = V_liq + f_sub * V_sol;
         
-        // Convert volume to height using constant beaker cross-section
-        const beakerCrossSection = beakerW * BEAKER_CROSS_SECTION_SCALE;
-        const fillHeight = Math.min(beakerH * 0.8, (V_fill * VOLUME_TO_ML) / (beakerCrossSection * HEIGHT_SCALE_FACTOR));
+        // Convert volume to height
+        const fillHeight = Math.min(beakerH * 0.9, V_fill * BEAKER_VOLUME_TO_HEIGHT_SCALE);
         
         // Render liquid
         if (V_liq > 0.000001) {
