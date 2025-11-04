@@ -994,7 +994,7 @@
     }
 
     // Atomic-scale view
-    function AtomicView({ simState }) {
+    function AtomicView({ simState, solidFloats }) {
       const canvasRef = useRef(null);
       const particlesRef = useRef([]);
       const animRef = useRef(null);
@@ -1008,14 +1008,16 @@
         const arr = [];
         const grid = Math.ceil(Math.sqrt(totalParticles));
         const spacingX = (w - 40) / grid;
-        const spacingY = (h - 80) / grid;
+        const spacingY = 10; // Tighter packing
         let count = 0;
-        const baseY = h - 60; // Start near bottom
+        const blockHeight = Math.ceil(totalParticles / grid) * spacingY;
+        const baseY = h - 12; // Start at the bottom
         for (let i = 0; i < grid && count < totalParticles; i++) {
           for (let j = 0; j < grid && count < totalParticles; j++) {
+            const yPos = baseY - j * spacingY;
             arr.push({
               x: 20 + i * spacingX + (Math.random() - 0.5) * 2,
-              y: baseY - j * spacingY + (Math.random() - 0.5) * 2,
+              y: yPos,
               vx: 0,
               vy: 0,
               baseX: 20 + i * spacingX,
@@ -1062,15 +1064,15 @@
           let currentLiquid = parts.filter(p => p.type === "liquid").length;
 
           // Gradually transition particles for smooth phase changes
-          // Melting: convert solids near interface (higher y) to liquid
           if (currentSolid > targetSolid) {
+            // Melting: solids become liquid
             const solids = parts.filter(p => p.type === "solid")
-              .sort((a, b) => b.y - a.y); // Top solids first
+              .sort((a, b) => solidFloats ? (b.y - a.y) : (a.y - b.y)); // Top or bottom first
             for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, currentSolid - targetSolid); i++) {
               solids[i].type = "liquid";
             }
           } else if (currentSolid < targetSolid && currentLiquid > 0) {
-            // Freezing: convert liquids near bottom to solid
+            // Freezing: liquids become solid
             const liquids = parts.filter(p => p.type === "liquid")
               .sort((a, b) => a.y - b.y); // Bottom liquids first
             for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, targetSolid - currentSolid); i++) {
@@ -1125,10 +1127,9 @@
               fy += (Math.random() - 0.5) * 0.6;
               fy += 0.35; // Gravity
             } else {
-              // gas: buoyancy (upward) and random motion
+              // gas: random motion to fill container
               fx += (Math.random() - 0.5) * 1.5;
               fy += (Math.random() - 0.5) * 1.5;
-              fy -= 0.25; // Buoyant (negative gravity)
             }
 
             // Particle-particle interactions using cell list
@@ -1741,7 +1742,7 @@
               substance={substance}
               mass_kg={mass_kg}
             />
-            <AtomicView simState={simState} />
+            <AtomicView simState={simState} solidFloats={solidFloats} />
           </div>
           <div className="panel right-panel">
             {!graphUnlocked ? (
