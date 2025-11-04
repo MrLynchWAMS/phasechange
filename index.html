@@ -838,17 +838,17 @@
         ctx.beginPath();
         ctx.moveTo(beakerX, beakerY);
         ctx.lineTo(beakerX, beakerBottom);
-        ctx.lineTo(beakerX + beakerW, beakerBottom);
         ctx.lineTo(beakerX + beakerW, beakerY);
         ctx.stroke();
 
         // Density-aware fill calculation
+        const DEFAULT_SOLID_DENSITY_MULTIPLIER = 1.05; // Typical solid is 5% denser than liquid
         const melted_mass_kg = melt_fraction * mass_kg;
         const boiled_mass_kg = boil_fraction * mass_kg;
         const solid_mass_kg = mass_kg - melted_mass_kg;
         
         const density_liquid = substance.density_liquid;
-        const density_solid = substance.density_solid || (density_liquid * 1.05);
+        const density_solid = substance.density_solid || (density_liquid * DEFAULT_SOLID_DENSITY_MULTIPLIER);
         
         // Volumes
         const V_liq = Math.max(0, melted_mass_kg - boiled_mass_kg) / density_liquid;
@@ -861,8 +861,11 @@
         const V_fill = V_liq + f_sub * V_sol;
         
         // Convert volume to height using constant beaker cross-section
-        const beakerCrossSection = beakerW * 1.0; // Simplified: width as representative area
-        const fillHeight = Math.min(beakerH * 0.8, (V_fill * 1e6) / (beakerCrossSection * 10)); // Scale factor for display
+        const BEAKER_CROSS_SECTION_SCALE = 1.0; // Representative area scaling
+        const VOLUME_TO_ML = 1e6; // Convert m³ to mL
+        const HEIGHT_SCALE_FACTOR = 10; // Scale volume to display height
+        const beakerCrossSection = beakerW * BEAKER_CROSS_SECTION_SCALE;
+        const fillHeight = Math.min(beakerH * 0.8, (V_fill * VOLUME_TO_ML) / (beakerCrossSection * HEIGHT_SCALE_FACTOR));
         
         // Render liquid
         if (V_liq > 0.000001) {
@@ -1026,10 +1029,15 @@
         const w = canvas.width,
           h = canvas.height;
         
-        // Simple cell list for neighbor search optimization
-        const cellSize = 25;
-        const gridCols = Math.ceil(w / cellSize);
-        const gridRows = Math.ceil(h / cellSize);
+        // Physics constants for spatial partitioning and interactions
+        const CELL_SIZE = 25; // Cell size for spatial grid (affects performance)
+        const REPULSION_DISTANCE = 10; // Distance for particle repulsion
+        const COHESION_MIN_DISTANCE = 10; // Minimum distance for liquid cohesion
+        const COHESION_MAX_DISTANCE = 18; // Maximum distance for liquid cohesion
+        const MIN_INTERACTION_DISTANCE = 0.1; // Minimum distance to avoid division by zero
+        
+        const gridCols = Math.ceil(w / CELL_SIZE);
+        const gridRows = Math.ceil(h / CELL_SIZE);
         
         const loop = () => {
           animRef.current = requestAnimationFrame(loop);
@@ -1094,8 +1102,8 @@
           );
           
           for (const p of parts) {
-            const cellX = Math.floor(p.x / cellSize);
-            const cellY = Math.floor(p.y / cellSize);
+            const cellX = Math.floor(p.x / CELL_SIZE);
+            const cellY = Math.floor(p.y / CELL_SIZE);
             if (cellX >= 0 && cellX < gridCols && cellY >= 0 && cellY < gridRows) {
               cells[cellY][cellX].push(p);
             }
@@ -1125,8 +1133,8 @@
             }
 
             // Particle-particle interactions using cell list
-            const cellX = Math.floor(p.x / cellSize);
-            const cellY = Math.floor(p.y / cellSize);
+            const cellX = Math.floor(p.x / CELL_SIZE);
+            const cellY = Math.floor(p.y / CELL_SIZE);
             
             // Check neighboring cells
             for (let dy = -1; dy <= 1; dy++) {
@@ -1141,9 +1149,9 @@
                     const dy2 = p2.y - p.y;
                     const dist = Math.hypot(dx2, dy2);
                     
-                    if (dist < 10 && dist > 0.1) {
+                    if (dist < REPULSION_DISTANCE && dist > MIN_INTERACTION_DISTANCE) {
                       // Soft repulsion at short range
-                      const repulsion = (10 - dist) * 0.08;
+                      const repulsion = (REPULSION_DISTANCE - dist) * 0.08;
                       const nx2 = dx2 / dist;
                       const ny2 = dy2 / dist;
                       fx -= nx2 * repulsion;
@@ -1151,8 +1159,9 @@
                     }
                     
                     // Weak cohesion for liquid-liquid pairs
-                    if (p.type === "liquid" && p2.type === "liquid" && dist < 18 && dist > 10) {
-                      const cohesion = (dist - 10) * 0.004;
+                    if (p.type === "liquid" && p2.type === "liquid" && 
+                        dist < COHESION_MAX_DISTANCE && dist > COHESION_MIN_DISTANCE) {
+                      const cohesion = (dist - COHESION_MIN_DISTANCE) * 0.004;
                       const nx2 = dx2 / dist;
                       const ny2 = dy2 / dist;
                       fx += nx2 * cohesion;
@@ -1499,7 +1508,15 @@
       });
       const [isRunning, setIsRunning] = useState(false);
       const [graphType, setGraphType] = useState("heat");
-      const [sim, setSim] = useState(() => new PhysicsEngine(Substances[settings.substanceKey], settings.seed));
+      
+      // Initialize sim with default substance and seed
+      const [sim, setSim] = useState(() => {
+        const params = new URLSearchParams(window.location.search);
+        const substanceKey = params.get("substanceKey") ?? "water";
+        const seed = params.get("seed") ?? "";
+        return new PhysicsEngine(Substances[substanceKey], seed);
+      });
+      
       const [simState, setSimState] = useState(sim.getState());
       const [analysis, setAnalysis] = useState("");
       const intervalRef = useRef(null);
@@ -1671,11 +1688,29 @@
 
       const onShareScenario = () => {
         const url = generateShareURL();
-        navigator.clipboard.writeText(url).then(() => {
-          alert("Link copied to clipboard!");
-        }).catch(() => {
-          alert("Failed to copy. URL:\n" + url);
-        });
+        // Clipboard API requires HTTPS in most browsers
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(url).then(() => {
+            alert("Link copied to clipboard!");
+          }).catch(() => {
+            alert("Failed to copy. URL:\n" + url);
+          });
+        } else {
+          // Fallback for HTTP or browsers without clipboard API
+          const textarea = document.createElement('textarea');
+          textarea.value = url;
+          textarea.style.position = 'fixed';
+          textarea.style.opacity = '0';
+          document.body.appendChild(textarea);
+          textarea.select();
+          try {
+            document.execCommand('copy');
+            alert("Link copied to clipboard!");
+          } catch (err) {
+            alert("Failed to copy. URL:\n" + url);
+          }
+          document.body.removeChild(textarea);
+        }
       };
 
       const onOpenInNewTab = () => {
