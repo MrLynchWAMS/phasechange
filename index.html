@@ -1052,11 +1052,9 @@
                 this.vx *= 0.95;
                 this.vy *= 0.95;
               } else if (this.state === 'GAS') {
-                // Gas particles: ignore gravity, move in straight lines
-                // No gravity, no additional forces - pure inertial motion
-                // Minimal damping to maintain straight-line velocity
-                this.vx *= 0.995;
-                this.vy *= 0.995;
+                // Gas particles: ideal gas behavior
+                // No gravity, no damping - perfect conservation of momentum
+                // No forces applied - pure inertial motion
               }
 
               // Update position
@@ -1067,22 +1065,22 @@
               const margin = 20;
               if (this.x < margin) {
                 this.x = margin;
-                this.vx *= -0.8;  // Bounce off walls
+                this.vx *= -0.9;  // Elastic collision with walls
               }
               if (this.x > canvasWidth - margin) {
                 this.x = canvasWidth - margin;
-                this.vx *= -0.8;  // Bounce off walls
+                this.vx *= -0.9;  // Elastic collision with walls
               }
               
               if (this.state === 'GAS') {
-                // Gas particles bounce off top and bottom walls
+                // Gas particles bounce off top and bottom walls elastically
                 if (this.y < margin) {
                   this.y = margin;
-                  this.vy *= -0.8;
+                  this.vy *= -0.9;
                 }
                 if (this.y > canvasHeight - margin) {
                   this.y = canvasHeight - margin;
-                  this.vy *= -0.8;
+                  this.vy *= -0.9;
                 }
               } else {
                 // Solid and liquid particles bounce off top, stop at bottom
@@ -1170,7 +1168,7 @@
               }
             }
 
-            // Boil liquid particles - prefer those near bottom but use any if needed
+            // Boil liquid particles - convert multiple per frame for faster response
             const liquidParticles = particles.filter(p => p.state === 'LIQUID');
             const liquidsNearBottom = liquidParticles
               .filter(p => p.y > canvasHeight - BOILING_ZONE_HEIGHT)
@@ -1185,12 +1183,15 @@
             // Use liquids near bottom first, then use any liquid if not enough near bottom
             const liquidsToBoil = liquidsNearBottom.length >= gasNeeded ? liquidsNearBottom : allLiquids;
             
-            for (let i = 0; i < Math.min(gasNeeded, liquidsToBoil.length); i++) {
+            // Convert multiple particles per frame for faster boiling response
+            const particlesToConvert = Math.min(5, gasNeeded, liquidsToBoil.length);
+            
+            for (let i = 0; i < particlesToConvert; i++) {
               if (liquidsToBoil[i]) {
                 liquidsToBoil[i].state = 'GAS';
-                // Give gas particles random straight-line velocities in all directions
+                // Give gas particles high random velocities in all directions (ideal gas)
                 const angle = p.random(0, Math.PI * 2);
-                const speed = p.random(2, 4);
+                const speed = p.random(5, 8);  // Much faster - ideal gas speeds
                 liquidsToBoil[i].vx = Math.cos(angle) * speed;
                 liquidsToBoil[i].vy = Math.sin(angle) * speed;
               }
@@ -1204,6 +1205,34 @@
             } else {
               // Ice floats - move block up as it melts
               blockOffset.y = -sinkAmount * 0.5;
+            }
+            
+            // Update grid positions of solid particles so the block lowers as particles melt
+            // This ensures the whole block descends as bottom particles disappear
+            if (solidCount > 0) {
+              const solidParticles = particles.filter(p => p.state === 'SOLID');
+              
+              // Find the current center of mass of solid particles
+              let centerY = 0;
+              for (const p of solidParticles) {
+                centerY += p.y;
+              }
+              centerY /= solidParticles.length;
+              
+              // Calculate expected center Y based on blockOffset
+              let expectedCenterY = 0;
+              for (const p of solidParticles) {
+                expectedCenterY += p.gridY + blockOffset.y;
+              }
+              expectedCenterY /= solidParticles.length;
+              
+              // Adjust grid positions if actual center is above expected (block is floating)
+              const yAdjustment = (expectedCenterY - centerY) * 0.1;
+              if (yAdjustment > 0.1) {
+                for (const p of solidParticles) {
+                  p.gridY += yAdjustment;
+                }
+              }
             }
 
             // Update and display particles
