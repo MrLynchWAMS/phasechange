@@ -1207,30 +1207,26 @@
               blockOffset.y = -sinkAmount * 0.5;
             }
             
-            // Update grid positions of solid particles so the block lowers as particles melt
-            // This ensures the whole block descends as bottom particles disappear
+            // Keep solid block bottom at container floor
+            // This ensures the block descends as particles melt and doesn't float
             if (solidCount > 0) {
               const solidParticles = particles.filter(p => p.state === 'SOLID');
               
-              // Find the current center of mass of solid particles
-              let centerY = 0;
+              // Find the lowest solid particle (bottom of the block)
+              let minY = Infinity;
               for (const p of solidParticles) {
-                centerY += p.y;
+                if (p.y < minY) {
+                  minY = p.y;
+                }
               }
-              centerY /= solidParticles.length;
               
-              // Calculate expected center Y based on blockOffset
-              let expectedCenterY = 0;
-              for (const p of solidParticles) {
-                expectedCenterY += p.gridY + blockOffset.y;
-              }
-              expectedCenterY /= solidParticles.length;
+              const containerBottom = canvasHeight - 20;  // margin
               
-              // Adjust grid positions if actual center is above expected (block is floating)
-              const yAdjustment = (expectedCenterY - centerY) * 0.1;
-              if (yAdjustment > 0.1) {
+              // If bottom of block is above container floor, shift all grid positions down
+              if (minY < containerBottom - 2) {  // Allow small gap for physics settling
+                const downshift = (containerBottom - minY) * 0.2;  // Gradual shift
                 for (const p of solidParticles) {
-                  p.gridY += yAdjustment;
+                  p.gridY += downshift;
                 }
               }
             }
