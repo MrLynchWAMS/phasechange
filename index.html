@@ -1044,19 +1044,20 @@
                   }
                 }
                 
-                // Apply strong gravity only to unsupported particles (bottom row)
-                if (!hasSupport) {
-                  this.vy += 0.25;
-                } else {
-                  // Supported particles: weak gravity, mainly follow grid position
-                  this.vy += 0.05;
-                }
-                
                 // Spring force to grid position keeps structure intact
                 const targetX = this.gridX + blockOffset.x;
                 const targetY = this.gridY + blockOffset.y;
-                this.vx += (targetX - this.x) * 0.08;  // Increased spring strength
-                this.vy += (targetY - this.y) * 0.08;
+                
+                if (!hasSupport) {
+                  // Unsupported particles (bottom row): strong gravity, moderate spring
+                  this.vy += 0.25;
+                  this.vx += (targetX - this.x) * 0.05;
+                  this.vy += (targetY - this.y) * 0.05;
+                } else {
+                  // Supported particles: NO gravity, very strong spring to maintain structure
+                  this.vx += (targetX - this.x) * 0.15;
+                  this.vy += (targetY - this.y) * 0.15;
+                }
                 
                 // Add small vibration
                 this.vx += (p.random(-1, 1)) * 0.1;
