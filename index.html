@@ -1033,6 +1033,8 @@
                 // Add small vibration
                 this.vx += (p.random(-1, 1)) * 0.1;
                 this.vy += (p.random(-1, 1)) * 0.1;
+                // Add gravity to solid block
+                this.vy += 0.08;
                 // Damping
                 this.vx *= 0.85;
                 this.vy *= 0.85;
@@ -1046,14 +1048,13 @@
                 this.vx *= 0.95;
                 this.vy *= 0.95;
               } else if (this.state === 'GAS') {
-                // High agitation
-                this.vx += (p.random(-1, 1)) * 1.5;
-                this.vy += (p.random(-1, 1)) * 1.5;
+                // Gas particles move in straight lines with slight random initial velocity
+                // No additional forces - just maintain velocity
                 // Slight upward bias
-                this.vy -= 0.05;
-                // Less damping
-                this.vx *= 0.98;
-                this.vy *= 0.98;
+                this.vy -= 0.02;
+                // Minimal damping for gas to maintain straight-line motion
+                this.vx *= 0.99;
+                this.vy *= 0.99;
               }
 
               // Update position
@@ -1133,7 +1134,15 @@
 
             // Melt particles from bottom to top
             const solidParticles = particles.filter(p => p.state === 'SOLID');
-            solidParticles.sort((a, b) => b.gridY - a.gridY); // Bottom first
+            // Sort by Y position (bottom first), then randomize within same Y level
+            solidParticles.sort((a, b) => {
+              const yDiff = b.gridY - a.gridY;
+              if (Math.abs(yDiff) < 1) {
+                // Same row - randomize order
+                return p.random() - 0.5;
+              }
+              return yDiff;
+            });
             
             const currentlyMelted = NUM_PARTICLES - solidParticles.length;
             const additionalMeltsNeeded = Math.max(0, numToMelt - currentlyMelted);
@@ -1144,19 +1153,27 @@
               }
             }
 
-            // Boil liquid particles near bottom surface
+            // Boil liquid particles - prefer those near bottom but use any if needed
             const liquidParticles = particles.filter(p => p.state === 'LIQUID');
             const liquidsNearBottom = liquidParticles
               .filter(p => p.y > canvasHeight - BOILING_ZONE_HEIGHT)
               .sort((a, b) => b.y - a.y);
             
+            // Also get all liquid particles sorted by Y as fallback
+            const allLiquids = liquidParticles.sort((a, b) => b.y - a.y);
+            
             const currentGas = particles.filter(p => p.state === 'GAS').length;
             const gasNeeded = Math.max(0, numToBoil - currentGas);
             
-            for (let i = 0; i < Math.min(gasNeeded, liquidsNearBottom.length); i++) {
-              if (liquidsNearBottom[i]) {
-                liquidsNearBottom[i].state = 'GAS';
-                liquidsNearBottom[i].vy = p.random(-3, -1); // Launch upward
+            // Use liquids near bottom first, then use any liquid if not enough near bottom
+            const liquidsToBoil = liquidsNearBottom.length >= gasNeeded ? liquidsNearBottom : allLiquids;
+            
+            for (let i = 0; i < Math.min(gasNeeded, liquidsToBoil.length); i++) {
+              if (liquidsToBoil[i]) {
+                liquidsToBoil[i].state = 'GAS';
+                // Give gas particles an initial straight-line velocity upward with slight randomness
+                liquidsToBoil[i].vx = p.random(-0.5, 0.5);
+                liquidsToBoil[i].vy = p.random(-4, -2);
               }
             }
 
