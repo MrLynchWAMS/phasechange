@@ -1025,19 +1025,23 @@
 
             update() {
               if (this.state === 'SOLID') {
-                // Vibrate around grid position + blockOffset
+                // Solid particles: strong gravity, weak spring to maintain rough shape
+                // Stronger gravity to ensure bottom particles sink to container floor
+                this.vy += 0.25;
+                
+                // Much weaker spring force to grid position - just keeps particles together loosely
                 const targetX = this.gridX + blockOffset.x;
                 const targetY = this.gridY + blockOffset.y;
-                this.vx += (targetX - this.x) * 0.1;
-                this.vy += (targetY - this.y) * 0.1;
+                this.vx += (targetX - this.x) * 0.02;
+                this.vy += (targetY - this.y) * 0.02;
+                
                 // Add small vibration
                 this.vx += (p.random(-1, 1)) * 0.1;
                 this.vy += (p.random(-1, 1)) * 0.1;
-                // Add gravity to solid block
-                this.vy += 0.08;
-                // Damping
-                this.vx *= 0.85;
-                this.vy *= 0.85;
+                
+                // Strong damping to prevent bouncing
+                this.vx *= 0.80;
+                this.vy *= 0.80;
               } else if (this.state === 'LIQUID') {
                 // Gravity
                 this.vy += 0.1;
@@ -1048,13 +1052,11 @@
                 this.vx *= 0.95;
                 this.vy *= 0.95;
               } else if (this.state === 'GAS') {
-                // Gas particles move in straight lines with slight random initial velocity
-                // No additional forces - just maintain velocity
-                // Slight upward bias
-                this.vy -= 0.02;
-                // Minimal damping for gas to maintain straight-line motion
-                this.vx *= 0.99;
-                this.vy *= 0.99;
+                // Gas particles: ignore gravity, move in straight lines
+                // No gravity, no additional forces - pure inertial motion
+                // Minimal damping to maintain straight-line velocity
+                this.vx *= 0.995;
+                this.vy *= 0.995;
               }
 
               // Update position
@@ -1065,23 +1067,38 @@
               const margin = 20;
               if (this.x < margin) {
                 this.x = margin;
-                this.vx *= -0.5;
+                this.vx *= -0.8;  // Bounce off walls
               }
               if (this.x > canvasWidth - margin) {
                 this.x = canvasWidth - margin;
-                this.vx *= -0.5;
+                this.vx *= -0.8;  // Bounce off walls
               }
-              if (this.y < margin) {
-                this.y = margin;
-                this.vy *= -0.5;
-              }
-              if (this.y > canvasHeight - margin) {
-                this.y = canvasHeight - margin;
-                this.vy *= -0.5;
+              
+              if (this.state === 'GAS') {
+                // Gas particles bounce off top and bottom walls
+                if (this.y < margin) {
+                  this.y = margin;
+                  this.vy *= -0.8;
+                }
+                if (this.y > canvasHeight - margin) {
+                  this.y = canvasHeight - margin;
+                  this.vy *= -0.8;
+                }
+              } else {
+                // Solid and liquid particles bounce off top, stop at bottom
+                if (this.y < margin) {
+                  this.y = margin;
+                  this.vy *= -0.5;
+                }
+                if (this.y > canvasHeight - margin) {
+                  this.y = canvasHeight - margin;
+                  this.vy *= -0.5;
+                }
               }
 
-              // Gas particles that escape off top reset as liquid at bottom
-              if (this.state === 'GAS' && this.y < 0) {
+              // Gas particles that escape off canvas edges recycle
+              // This shouldn't happen often with proper bouncing, but as a safety net
+              if (this.state === 'GAS' && (this.y < -10 || this.y > canvasHeight + 10)) {
                 this.state = 'LIQUID';
                 this.y = canvasHeight - RESET_DISTANCE_FROM_BOTTOM;
                 this.x = p.random(margin, canvasWidth - margin);
@@ -1171,9 +1188,11 @@
             for (let i = 0; i < Math.min(gasNeeded, liquidsToBoil.length); i++) {
               if (liquidsToBoil[i]) {
                 liquidsToBoil[i].state = 'GAS';
-                // Give gas particles an initial straight-line velocity upward with slight randomness
-                liquidsToBoil[i].vx = p.random(-0.5, 0.5);
-                liquidsToBoil[i].vy = p.random(-4, -2);
+                // Give gas particles random straight-line velocities in all directions
+                const angle = p.random(0, Math.PI * 2);
+                const speed = p.random(2, 4);
+                liquidsToBoil[i].vx = Math.cos(angle) * speed;
+                liquidsToBoil[i].vy = Math.sin(angle) * speed;
               }
             }
 
