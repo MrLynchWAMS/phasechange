@@ -1025,15 +1025,38 @@
 
             update() {
               if (this.state === 'SOLID') {
-                // Solid particles: strong gravity, weak spring to maintain rough shape
-                // Stronger gravity to ensure bottom particles sink to container floor
-                this.vy += 0.25;
+                // Solid particles: Only bottom particles (without support) get gravity
+                // Upper particles maintain shape through spring forces
                 
-                // Much weaker spring force to grid position - just keeps particles together loosely
+                // Check if this particle has solid support below it
+                let hasSupport = false;
+                const supportDistance = 12;  // Distance to check for support below
+                
+                for (const other of particles) {
+                  if (other.state === 'SOLID' && other !== this) {
+                    const dx = other.x - this.x;
+                    const dy = other.y - this.y;
+                    // Check if other particle is below and close enough to provide support
+                    if (dy > 0 && dy < supportDistance && Math.abs(dx) < supportDistance) {
+                      hasSupport = true;
+                      break;
+                    }
+                  }
+                }
+                
+                // Apply strong gravity only to unsupported particles (bottom row)
+                if (!hasSupport) {
+                  this.vy += 0.25;
+                } else {
+                  // Supported particles: weak gravity, mainly follow grid position
+                  this.vy += 0.05;
+                }
+                
+                // Spring force to grid position keeps structure intact
                 const targetX = this.gridX + blockOffset.x;
                 const targetY = this.gridY + blockOffset.y;
-                this.vx += (targetX - this.x) * 0.02;
-                this.vy += (targetY - this.y) * 0.02;
+                this.vx += (targetX - this.x) * 0.08;  // Increased spring strength
+                this.vy += (targetY - this.y) * 0.08;
                 
                 // Add small vibration
                 this.vx += (p.random(-1, 1)) * 0.1;
