@@ -1004,6 +1004,8 @@
         const sketch = (p) => {
           const NUM_PARTICLES = 200;
           const PARTICLE_RADIUS = 4;
+          const RESET_DISTANCE_FROM_BOTTOM = 30;
+          const BOILING_ZONE_HEIGHT = 80;
           let particles = [];
           let blockOffset = { x: 0, y: 0 };
           const canvasWidth = 420;
@@ -1080,7 +1082,7 @@
               // Gas particles that escape off top reset as liquid at bottom
               if (this.state === 'GAS' && this.y < 0) {
                 this.state = 'LIQUID';
-                this.y = canvasHeight - 30;
+                this.y = canvasHeight - RESET_DISTANCE_FROM_BOTTOM;
                 this.x = p.random(margin, canvasWidth - margin);
                 this.vx = 0;
                 this.vy = 0;
@@ -1132,7 +1134,11 @@
             // Melt particles from bottom to top
             const solidParticles = particles.filter(p => p.state === 'SOLID');
             solidParticles.sort((a, b) => b.gridY - a.gridY); // Bottom first
-            for (let i = 0; i < Math.min(numToMelt - (NUM_PARTICLES - solidParticles.length), solidParticles.length); i++) {
+            
+            const currentlyMelted = NUM_PARTICLES - solidParticles.length;
+            const additionalMeltsNeeded = Math.max(0, numToMelt - currentlyMelted);
+            
+            for (let i = 0; i < Math.min(additionalMeltsNeeded, solidParticles.length); i++) {
               if (solidParticles[i]) {
                 solidParticles[i].state = 'LIQUID';
               }
@@ -1141,7 +1147,7 @@
             // Boil liquid particles near bottom surface
             const liquidParticles = particles.filter(p => p.state === 'LIQUID');
             const liquidsNearBottom = liquidParticles
-              .filter(p => p.y > canvasHeight - 80)
+              .filter(p => p.y > canvasHeight - BOILING_ZONE_HEIGHT)
               .sort((a, b) => b.y - a.y);
             
             const currentGas = particles.filter(p => p.state === 'GAS').length;
