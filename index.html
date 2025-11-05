@@ -629,6 +629,10 @@
     const LJ_EPSILON = 0.5; // Depth of potential well
     const LJ_SIGMA = 6.0; // Distance at which potential is zero
     const LJ_CUTOFF = 15.0; // Cutoff distance for LJ potential
+    
+    // Collision restitution coefficients (energy retention in collisions)
+    const GAS_WALL_RESTITUTION = 0.95; // 95% energy retention for gas-wall collisions
+    const GAS_GAS_RESTITUTION = 0.98; // 98% energy retention for gas-gas collisions
 
     // --- REACT COMPONENTS ---
     function Controls({
@@ -1247,8 +1251,8 @@
                         
                         if (dotProduct < 0) { // Particles approaching
                           // Elastic collision: exchange momentum along collision axis
-                          p.vx -= dotProduct * nx2 * 0.98;
-                          p.vy -= dotProduct * ny2 * 0.98;
+                          p.vx -= dotProduct * nx2 * GAS_GAS_RESTITUTION;
+                          p.vy -= dotProduct * ny2 * GAS_GAS_RESTITUTION;
                         }
                         forceMagnitude = 0; // No continuous force, only collision
                       } else if (p.type === "gas" || p2.type === "gas") {
@@ -1302,7 +1306,7 @@
             if (p.x < 6) {
               p.x = 6;
               if (p.type === "gas") {
-                p.vx = Math.abs(p.vx) * 0.95; // Nearly elastic collision for gas
+                p.vx = Math.abs(p.vx) * GAS_WALL_RESTITUTION; // Nearly elastic collision for gas
               } else {
                 p.vx = Math.abs(p.vx) * 0.3;
               }
@@ -1310,7 +1314,7 @@
             if (p.x > w - 6) {
               p.x = w - 6;
               if (p.type === "gas") {
-                p.vx = -Math.abs(p.vx) * 0.95; // Nearly elastic collision for gas
+                p.vx = -Math.abs(p.vx) * GAS_WALL_RESTITUTION; // Nearly elastic collision for gas
               } else {
                 p.vx = -Math.abs(p.vx) * 0.3;
               }
@@ -1318,7 +1322,7 @@
             if (p.y < 6) {
               p.y = 6;
               if (p.type === "gas") {
-                p.vy = Math.abs(p.vy) * 0.95; // Nearly elastic collision for gas
+                p.vy = Math.abs(p.vy) * GAS_WALL_RESTITUTION; // Nearly elastic collision for gas
               } else {
                 p.vy = Math.abs(p.vy) * 0.3;
               }
@@ -1326,7 +1330,7 @@
             if (p.y > h - 8) {
               p.y = h - 8;
               if (p.type === "gas") {
-                p.vy = -Math.abs(p.vy) * 0.95; // Nearly elastic collision for gas
+                p.vy = -Math.abs(p.vy) * GAS_WALL_RESTITUTION; // Nearly elastic collision for gas
               } else {
                 p.vy = -Math.abs(p.vy) * 0.3;
               }
