@@ -13,6 +13,7 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.9.0/p5.js"></script>
 
   <style>
     body {
@@ -617,19 +618,6 @@
     const DEFAULT_SOLID_DENSITY_MULTIPLIER = 1.05; // Typical solid is 5% denser than liquid
     const BEAKER_VOLUME_TO_HEIGHT_SCALE = 1.5e6; // Calibrated factor to scale m³ to pixel height
 
-    // Constants for atomic view physics
-    const CELL_SIZE = 25; // Cell size for spatial grid (affects performance)
-    const REPULSION_DISTANCE = 10; // Distance for particle repulsion
-    const COHESION_MIN_DISTANCE = 10; // Minimum distance for liquid cohesion
-    const COHESION_MAX_DISTANCE = 18; // Maximum distance for liquid cohesion
-    const MIN_INTERACTION_DISTANCE = 0.1; // Minimum distance to avoid division by zero
-    const PARTICLES_TRANSITION_RATE = 3; // Max particles transitioning phase per frame
-    
-    // Lennard-Jones potential constants for realistic intermolecular forces
-    const LJ_EPSILON = 0.5; // Depth of potential well
-    const LJ_SIGMA = 6.0; // Distance at which potential is zero
-    const LJ_CUTOFF = 15.0; // Cutoff distance for LJ potential
-
     // --- REACT COMPONENTS ---
     function Controls({
       settings,
@@ -998,413 +986,239 @@
       );
     }
 
-    // Atomic-scale view
+    // Atomic-scale view with p5.js
     function AtomicView({ simState, solidFloats }) {
-      const canvasRef = useRef(null);
-      const particlesRef = useRef([]);
-      const animRef = useRef(null);
-      const totalParticles = 200; // Increased from 70
-      const rngRef = useRef(new XORShift(12345)); // For consistent randomness
-
-      // Use a ref to hold the latest simState, preventing stale closures in the animation loop
+      const containerRef = useRef(null);
+      const p5InstanceRef = useRef(null);
       const simStateRef = useRef(simState);
+
+      // Keep simState in sync with ref for p5 access
       useEffect(() => {
         simStateRef.current = simState;
       }, [simState]);
 
-      // Main effect for initialization and animation loop. Re-runs when substance changes.
       useEffect(() => {
-        const canvas = canvasRef.current;
-        const ctx = canvas.getContext("2d");
-        const w = canvas.width,
-          h = canvas.height;
+        if (!containerRef.current) return;
 
-        // Guard against running before canvas is sized, which causes off-screen particle placement
-        if (w === 0 || h === 0) return;
+        // p5.js sketch
+        const sketch = (p) => {
+          const NUM_PARTICLES = 200;
+          const PARTICLE_RADIUS = 4;
+          let particles = [];
+          let blockOffset = { x: 0, y: 0 };
+          const canvasWidth = 420;
+          const canvasHeight = 260;
 
-        // --- Particle Initialization (runs inside this effect) ---
-        // Create tightly packed solid structure at bottom
-        const arr = [];
-        const particlesPerRow = Math.floor((w - 40) / (LJ_SIGMA * 1.1));
-        const spacing = LJ_SIGMA * 1.1; // Tight packing based on LJ equilibrium
-        const rows = Math.ceil(totalParticles / particlesPerRow);
-        let count = 0;
-        
-        const baseY = solidFloats ? 30 : h - 20;
-        
-        for (let row = 0; row < rows && count < totalParticles; row++) {
-          for (let col = 0; col < particlesPerRow && count < totalParticles; col++) {
-            const xPos = 20 + col * spacing + (row % 2) * (spacing / 2); // Hexagonal packing
-            const yPos = baseY + row * spacing * 0.866; // 0.866 ≈ sin(60°) for hex packing
-            
-            arr.push({
-              x: xPos,
-              y: yPos,
-              vx: 0,
-              vy: 0,
-              baseX: xPos,
-              baseY: yPos,
-              type: "solid",
-            });
-            count++;
-          }
-        }
-        particlesRef.current = arr;
-
-        // --- Animation Loop ---
-        const gridCols = Math.ceil(w / CELL_SIZE);
-        const gridRows = Math.ceil(h / CELL_SIZE);
-        
-        const loop = () => {
-          animRef.current = requestAnimationFrame(loop);
-          ctx.fillStyle = "#222";
-          ctx.fillRect(0, 0, w, h);
-
-          const { melt_fraction = 0, boil_fraction = 0, T_true = 0 } = simStateRef.current || {};
-          const fracSolid = Math.max(0, 1 - melt_fraction);
-          const fracGas = Math.max(0, boil_fraction);
-          const fracLiquid = 1 - fracSolid - fracGas;
-          const hasLiquid = fracLiquid > 0.01; // Condition for buoyancy
-          
-          // Temperature affects particle motion intensity
-          const tempKelvin = T_true + 273.15;
-          const tempFactor = Math.max(0.1, Math.min(3, tempKelvin / 300)); // Scale around room temp
-          
-          let targetSolid = Math.round(totalParticles * fracSolid);
-          let targetGas = Math.round(totalParticles * fracGas);
-          let targetLiquid = totalParticles - targetSolid - targetGas;
-
-          const parts = particlesRef.current;
-
-          // Count current types
-          let currentSolid = parts.filter(p => p.type === "solid").length;
-          let currentGas = parts.filter(p => p.type === "gas").length;
-          let currentLiquid = parts.filter(p => p.type === "liquid").length;
-
-          // Gradually transition particles for smooth phase changes (happens during simulation)
-          if (currentSolid > targetSolid) {
-            // Melting: solids at bottom become liquid (heat from below)
-            const solids = parts.filter(p => p.type === "solid")
-              .sort((a, b) => (b.y - a.y)); // Bottom particles first
-            for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, currentSolid - targetSolid); i++) {
-              solids[i].type = "liquid";
-              // Add some random velocity for liquid
-              solids[i].vx = (rngRef.current.random() - 0.5) * 2;
-              solids[i].vy = (rngRef.current.random() - 0.5) * 2;
+          // Particle class
+          class Particle {
+            constructor(gridX, gridY) {
+              this.gridX = gridX;
+              this.gridY = gridY;
+              this.x = gridX;
+              this.y = gridY;
+              this.vx = 0;
+              this.vy = 0;
+              this.state = 'SOLID';
             }
-          } else if (currentSolid < targetSolid && currentLiquid > 0) {
-            // Freezing: liquids at bottom become solid
-            const liquids = parts.filter(p => p.type === "liquid")
-              .sort((a, b) => b.y - a.y); // Bottom liquids first
-            for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, targetSolid - currentSolid); i++) {
-              liquids[i].type = "solid";
-              // Find nearest solid cluster position
-              const nearestSolid = parts.find(p => p.type === "solid" && p !== liquids[i]);
-              if (nearestSolid) {
-                liquids[i].baseX = nearestSolid.baseX + (rngRef.current.random() - 0.5) * spacing;
-                liquids[i].baseY = nearestSolid.baseY + (rngRef.current.random() - 0.5) * spacing;
+
+            update() {
+              if (this.state === 'SOLID') {
+                // Vibrate around grid position + blockOffset
+                const targetX = this.gridX + blockOffset.x;
+                const targetY = this.gridY + blockOffset.y;
+                this.vx += (targetX - this.x) * 0.1;
+                this.vy += (targetY - this.y) * 0.1;
+                // Add small vibration
+                this.vx += (p.random(-1, 1)) * 0.1;
+                this.vy += (p.random(-1, 1)) * 0.1;
+                // Damping
+                this.vx *= 0.85;
+                this.vy *= 0.85;
+              } else if (this.state === 'LIQUID') {
+                // Gravity
+                this.vy += 0.1;
+                // Brownian motion
+                this.vx += (p.random(-1, 1)) * 0.4;
+                this.vy += (p.random(-1, 1)) * 0.4;
+                // Damping
+                this.vx *= 0.95;
+                this.vy *= 0.95;
+              } else if (this.state === 'GAS') {
+                // High agitation
+                this.vx += (p.random(-1, 1)) * 1.5;
+                this.vy += (p.random(-1, 1)) * 1.5;
+                // Slight upward bias
+                this.vy -= 0.05;
+                // Less damping
+                this.vx *= 0.98;
+                this.vy *= 0.98;
+              }
+
+              // Update position
+              this.x += this.vx;
+              this.y += this.vy;
+
+              // Boundary collisions
+              const margin = 20;
+              if (this.x < margin) {
+                this.x = margin;
+                this.vx *= -0.5;
+              }
+              if (this.x > canvasWidth - margin) {
+                this.x = canvasWidth - margin;
+                this.vx *= -0.5;
+              }
+              if (this.y < margin) {
+                this.y = margin;
+                this.vy *= -0.5;
+              }
+              if (this.y > canvasHeight - margin) {
+                this.y = canvasHeight - margin;
+                this.vy *= -0.5;
+              }
+
+              // Gas particles that escape off top reset as liquid at bottom
+              if (this.state === 'GAS' && this.y < 0) {
+                this.state = 'LIQUID';
+                this.y = canvasHeight - 30;
+                this.x = p.random(margin, canvasWidth - margin);
+                this.vx = 0;
+                this.vy = 0;
               }
             }
-          }
 
-          // Boiling: convert liquids near top to gas (heat rises)
-          if (currentGas < targetGas && currentLiquid > 0) {
-            const liquids = parts.filter(p => p.type === "liquid")
-              .sort((a, b) => a.y - b.y); // Top liquids first (heat propagated up)
-            for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, targetGas - currentGas); i++) {
-              const p = liquids[i];
-              p.type = "gas";
-              p.vx = (rngRef.current.random() - 0.5) * 6 * tempFactor;
-              p.vy = (rngRef.current.random() - 0.5) * 6 * tempFactor - 2; // Bias upwards
-            }
-          } else if (currentGas > targetGas) {
-            // Condensing: convert gases near bottom to liquid
-            const gases = parts.filter(p => p.type === "gas")
-              .sort((a, b) => b.y - a.y); // Bottom gases first
-            for (let i = 0; i < Math.min(PARTICLES_TRANSITION_RATE, currentGas - targetGas); i++) {
-              gases[i].type = "liquid";
-              gases[i].vx *= 0.3;
-              gases[i].vy *= 0.3;
-            }
-          }
-
-          // Build cell list for efficient neighbor search
-          const cells = Array.from({ length: gridRows }, () => 
-            Array.from({ length: gridCols }, () => [])
-          );
-          
-          for (const p of parts) {
-            const cellX = Math.floor(p.x / CELL_SIZE);
-            const cellY = Math.floor(p.y / CELL_SIZE);
-            if (cellX >= 0 && cellX < gridCols && cellY >= 0 && cellY < gridRows) {
-              cells[cellY][cellX].push(p);
-            }
-          }
-
-          // Calculate center of mass for solid block (for cohesion)
-          const solidParticles = parts.filter(p => p.type === 'solid');
-          let solidCenterX = 0, solidCenterY = 0;
-          if (solidParticles.length > 0) {
-            for (const p of solidParticles) {
-              solidCenterX += p.x;
-              solidCenterY += p.y;
-            }
-            solidCenterX /= solidParticles.length;
-            solidCenterY /= solidParticles.length;
-          }
-
-          // Physics update with particle-particle interactions
-          for (let i = 0; i < parts.length; i++) {
-            const p = parts[i];
-            let fx = 0, fy = 0;
-
-            // Phase-specific forces
-            if (p.type === "solid") {
-              // Strong lattice spring forces to maintain structure
-              const dx = p.baseX - p.x;
-              const dy = p.baseY - p.y;
-              fx += dx * 0.5; // Strong restoring force
-              fy += dy * 0.5;
-              
-              // Individual thermal vibration (not collective)
-              const vibrationMagnitude = 0.2 * tempFactor;
-              fx += (rngRef.current.random() - 0.5) * vibrationMagnitude;
-              fy += (rngRef.current.random() - 0.5) * vibrationMagnitude;
-
-              // Gravity or buoyancy
-              if (solidFloats && hasLiquid) {
-                fy -= 0.2; // Reduced buoyancy force
+            display() {
+              p.noStroke();
+              if (this.state === 'SOLID') {
+                p.fill(173, 216, 230); // Light blue
+              } else if (this.state === 'LIQUID') {
+                p.fill(0, 120, 220, 200); // Blue with transparency
               } else {
-                fy += 0.15; // Reduced gravity
+                p.fill(200, 200, 200, 180); // Gray with transparency
               }
-              
-              // Strong cohesion to keep solid particles together
-              const toCenterX = solidCenterX - p.x;
-              const toCenterY = solidCenterY - p.y;
-              const distToCenter = Math.hypot(toCenterX, toCenterY);
-              if (distToCenter > spacing * 2) {
-                fx += (toCenterX / distToCenter) * 0.08;
-                fy += (toCenterY / distToCenter) * 0.08;
+              p.circle(this.x, this.y, PARTICLE_RADIUS * 2);
+            }
+          }
+
+          p.setup = () => {
+            p.createCanvas(canvasWidth, canvasHeight);
+            
+            // Initialize particles in a grid at the bottom
+            const cols = 20;
+            const rows = Math.ceil(NUM_PARTICLES / cols);
+            const spacing = 8;
+            const startX = (canvasWidth - cols * spacing) / 2;
+            const startY = canvasHeight - 40;
+
+            for (let i = 0; i < NUM_PARTICLES; i++) {
+              const col = i % cols;
+              const row = Math.floor(i / cols);
+              const gridX = startX + col * spacing;
+              const gridY = startY - row * spacing;
+              particles.push(new Particle(gridX, gridY));
+            }
+          };
+
+          p.draw = () => {
+            p.background(34, 34, 34);
+
+            const state = simStateRef.current || {};
+            const { melt_fraction = 0, boil_fraction = 0, phase = 'solid' } = state;
+
+            // Calculate target counts for each phase
+            const numToMelt = Math.floor(melt_fraction * NUM_PARTICLES);
+            const numToBoil = Math.floor(boil_fraction * NUM_PARTICLES);
+
+            // Melt particles from bottom to top
+            const solidParticles = particles.filter(p => p.state === 'SOLID');
+            solidParticles.sort((a, b) => b.gridY - a.gridY); // Bottom first
+            for (let i = 0; i < Math.min(numToMelt - (NUM_PARTICLES - solidParticles.length), solidParticles.length); i++) {
+              if (solidParticles[i]) {
+                solidParticles[i].state = 'LIQUID';
               }
-            } else if (p.type === "liquid") {
-              // Gravity
-              fy += 0.2;
-              
-              // Brownian motion scaled by temperature
-              fx += (rngRef.current.random() - 0.5) * 0.4 * tempFactor;
-              fy += (rngRef.current.random() - 0.5) * 0.4 * tempFactor;
-              
-              // Convection: particles near bottom are heated and rise
-              const distFromBottom = h - p.y;
-              if (distFromBottom < 60) {
-                const heatFactor = (60 - distFromBottom) / 60;
-                fy -= 0.3 * heatFactor * tempFactor; // Upward convection
-                // Add horizontal thermal motion
-                fx += (rngRef.current.random() - 0.5) * 0.5 * heatFactor * tempFactor;
+            }
+
+            // Boil liquid particles near bottom surface
+            const liquidParticles = particles.filter(p => p.state === 'LIQUID');
+            const liquidsNearBottom = liquidParticles
+              .filter(p => p.y > canvasHeight - 80)
+              .sort((a, b) => b.y - a.y);
+            
+            const currentGas = particles.filter(p => p.state === 'GAS').length;
+            const gasNeeded = Math.max(0, numToBoil - currentGas);
+            
+            for (let i = 0; i < Math.min(gasNeeded, liquidsNearBottom.length); i++) {
+              if (liquidsNearBottom[i]) {
+                liquidsNearBottom[i].state = 'GAS';
+                liquidsNearBottom[i].vy = p.random(-3, -1); // Launch upward
               }
+            }
+
+            // Make solid block sink as it melts
+            const solidCount = particles.filter(p => p.state === 'SOLID').length;
+            const sinkAmount = (NUM_PARTICLES - solidCount) * 0.15;
+            if (!solidFloats) {
+              blockOffset.y = sinkAmount;
             } else {
-              // gas: high velocity, minimal forces except thermal
-              fx += (rngRef.current.random() - 0.5) * 0.8 * tempFactor;
-              fy += (rngRef.current.random() - 0.5) * 0.8 * tempFactor;
-              // Slight upward bias for gas
-              fy -= 0.05;
+              // Ice floats - move block up as it melts
+              blockOffset.y = -sinkAmount * 0.5;
             }
 
-            // Particle-particle interactions using cell list and Lennard-Jones potential
-            const cellX = Math.floor(p.x / CELL_SIZE);
-            const cellY = Math.floor(p.y / CELL_SIZE);
-            
-            // Check neighboring cells
-            for (let dy = -1; dy <= 1; dy++) {
-              for (let dx = -1; dx <= 1; dx++) {
-                const nx = cellX + dx;
-                const ny = cellY + dy;
-                if (nx >= 0 && nx < gridCols && ny >= 0 && ny < gridRows) {
-                  for (const p2 of cells[ny][nx]) {
-                    if (p === p2) continue;
-                    
-                    const dx2 = p2.x - p.x;
-                    const dy2 = p2.y - p.y;
-                    const dist = Math.hypot(dx2, dy2);
-                    
-                    if (dist < LJ_CUTOFF && dist > MIN_INTERACTION_DISTANCE) {
-                      // Lennard-Jones potential: F = 24*epsilon/r * (2*(sigma/r)^12 - (sigma/r)^6)
-                      const ratio = LJ_SIGMA / dist;
-                      const ratio6 = Math.pow(ratio, 6);
-                      const ratio12 = ratio6 * ratio6;
-                      
-                      let forceMagnitude = 24 * LJ_EPSILON / dist * (2 * ratio12 - ratio6);
-                      
-                      // Adjust force strength based on phase interaction
-                      if (p.type === "solid" && p2.type === "solid") {
-                        forceMagnitude *= 2.0; // Strong solid-solid bonds
-                      } else if (p.type === "liquid" && p2.type === "liquid") {
-                        forceMagnitude *= 0.4; // Moderate liquid-liquid cohesion
-                      } else if (p.type === "gas" || p2.type === "gas") {
-                        forceMagnitude *= 0.1; // Weak gas interactions
-                      } else {
-                        forceMagnitude *= 0.6; // Mixed phase interactions
-                      }
-                      
-                      const nx2 = dx2 / dist;
-                      const ny2 = dy2 / dist;
-                      fx += nx2 * forceMagnitude;
-                      fy += ny2 * forceMagnitude;
-                    }
-                  }
-                }
+            // Update and display particles
+            for (let particle of particles) {
+              particle.update();
+              particle.display();
+            }
+
+            // Draw beaker walls
+            p.noFill();
+            p.stroke(100, 100, 100);
+            p.strokeWeight(3);
+            p.line(20, 20, 20, canvasHeight - 20);
+            p.line(canvasWidth - 20, 20, canvasWidth - 20, canvasHeight - 20);
+            p.line(20, canvasHeight - 20, canvasWidth - 20, canvasHeight - 20);
+
+            // Draw heat source (flame)
+            const heaterPower = state?.logEntry?.heater_power_W || 0;
+            if (heaterPower > 0) {
+              const flameIntensity = Math.min(1, heaterPower / 500);
+              p.noStroke();
+              
+              // Draw flame
+              for (let i = 0; i < 10; i++) {
+                const x = p.random(40, canvasWidth - 40);
+                const y = canvasHeight - 15 - p.random(0, 10);
+                const size = p.random(3, 8) * flameIntensity;
+                p.fill(255, p.random(100, 200), 0, 150);
+                p.circle(x, y, size);
               }
             }
 
-            // Apply forces to velocity
-            p.vx = (p.vx || 0) + fx;
-            p.vy = (p.vy || 0) + fy;
-
-            // Phase-appropriate damping and speed limits
-            let speedLimit, damping;
-            if (p.type === "solid") {
-              speedLimit = 0.8; // Very limited movement
-              damping = 0.70; // Heavy damping for solids
-            } else if (p.type === "liquid") {
-              speedLimit = 3.0;
-              damping = 0.90; // Moderate damping for viscosity
-            } else {
-              // gas: minimal damping, pure inertial motion
-              speedLimit = 10;
-              damping = 0.98;
-            }
-
-            p.vx *= damping;
-            p.vy *= damping;
-
-            const speed = Math.hypot(p.vx, p.vy);
-            if (speed > speedLimit) {
-              p.vx = (p.vx / speed) * speedLimit;
-              p.vy = (p.vy / speed) * speedLimit;
-            }
-
-            // Update position (semi-implicit Euler)
-            p.x += p.vx;
-            p.y += p.vy;
-
-            // Boundary conditions with proper collisions
-            if (p.x < 6) {
-              p.x = 6;
-              p.vx = Math.abs(p.vx) * 0.3;
-            }
-            if (p.x > w - 6) {
-              p.x = w - 6;
-              p.vx = -Math.abs(p.vx) * 0.3;
-            }
-            if (p.y < 6) {
-              p.y = 6;
-              p.vy = Math.abs(p.vy) * 0.3;
-            }
-            if (p.y > h - 8) {
-              p.y = h - 8;
-              p.vy = -Math.abs(p.vy) * (p.type === "gas" ? 0.5 : 0.3);
-            }
-          }
-          
-          // Update solid lattice base positions to allow mass to move as unit
-          if (solidParticles.length > 0) {
-            let avgDx = 0, avgDy = 0;
-            for (const p of solidParticles) {
-              avgDx += (p.x - p.baseX);
-              avgDy += (p.y - p.baseY);
-            }
-            avgDx /= solidParticles.length;
-            avgDy /= solidParticles.length;
-            
-            // Move lattice gradually toward actual positions
-            for (const p of solidParticles) {
-              p.baseX += avgDx * 0.05;
-              p.baseY += avgDy * 0.05;
-            }
-          }
-
-          // Draw heat source at bottom (changes with heater power)
-          const heaterPower = simStateRef.current?.logEntry?.heater_power_W || 0;
-          if (heaterPower > 0) {
-            const heatIntensity = Math.min(1, heaterPower / 500);
-            const heatHeight = 12;
-            
-            // Create gradient for heat visualization
-            const gradient = ctx.createLinearGradient(0, h - heatHeight, 0, h);
-            gradient.addColorStop(0, `rgba(255, 100, 0, ${heatIntensity * 0.3})`);
-            gradient.addColorStop(1, `rgba(255, 50, 0, ${heatIntensity * 0.7})`);
-            
-            ctx.fillStyle = gradient;
-            ctx.fillRect(0, h - heatHeight, w, heatHeight);
-            
-            // Add flickering heat effect
-            for (let i = 0; i < 10 * heatIntensity; i++) {
-              const x = rngRef.current.random() * w;
-              const y = h - rngRef.current.random() * heatHeight * 1.5;
-              ctx.fillStyle = `rgba(255, ${100 + rngRef.current.random() * 100}, 0, ${rngRef.current.random() * 0.5})`;
-              ctx.beginPath();
-              ctx.arc(x, y, 1 + rngRef.current.random() * 2, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
-
-          // Draw particles
-          for (const p of parts) {
-            let color = "#7fbfff";
-            let radius = 3.5;
-            
-            // Add temperature-based color variation
-            const tempVariation = Math.min(1, tempFactor / 2);
-            
-            if (p.type === "solid") {
-              const blue = Math.floor(255 - tempVariation * 50);
-              color = `rgb(191, 232, ${blue})`;
-              radius = 3.5;
-            } else if (p.type === "gas") {
-              const grey = Math.floor(180 + tempVariation * 50);
-              color = `rgb(${grey}, ${grey}, ${grey})`;
-              radius = 3.0;
-            } else {
-              // Liquid - warmer particles near bottom are more orange/red
-              const distFromBottom = h - p.y;
-              const heatColor = distFromBottom < 60 ? (60 - distFromBottom) / 60 : 0;
-              const red = Math.floor(93 + heatColor * 100);
-              const green = Math.floor(169 - heatColor * 50);
-              const blue = Math.floor(255 - heatColor * 100);
-              color = `rgb(${red}, ${green}, ${blue})`;
-              radius = 3.8;
-            }
-            
-            ctx.fillStyle = color;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, radius, 0, Math.PI * 2);
-            ctx.fill();
-            
-            // Add glow effect for hot particles
-            if (p.type === "liquid" && h - p.y < 60) {
-              ctx.fillStyle = "rgba(255, 100, 0, 0.15)";
-              ctx.beginPath();
-              ctx.arc(p.x, p.y, radius + 2, 0, Math.PI * 2);
-              ctx.fill();
-            }
-          }
+            // Draw phase label
+            p.fill(255);
+            p.noStroke();
+            p.textSize(14);
+            p.textAlign(p.LEFT);
+            p.text(`Phase: ${phase}`, 30, 40);
+          };
         };
-        
-        animRef.current = requestAnimationFrame(loop);
+
+        // Create p5 instance
+        p5InstanceRef.current = new p5(sketch, containerRef.current);
+
+        // Cleanup
         return () => {
-          if (animRef.current) cancelAnimationFrame(animRef.current);
+          if (p5InstanceRef.current) {
+            p5InstanceRef.current.remove();
+            p5InstanceRef.current = null;
+          }
         };
-      }, [simState]);
+      }, [solidFloats]);
 
       return (
         <>
           <h3>Atomic-Scale View (Simplified)</h3>
-          <canvas
-            ref={canvasRef}
-            className="atomic-canvas"
-            width="420"
-            height="260"
-          ></canvas>
+          <div ref={containerRef} className="atomic-canvas"></div>
         </>
       );
     }
