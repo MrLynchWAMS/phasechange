@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ice Melting Experiment</title>
+    <style>
+        /* CSS styles */
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: grid;
+            place-items: center;
+            min-height: 100vh;
+            background-color: #f4f7f6;
+            color: #333;
+            text-align: center;
+            padding: 1rem;
+            box-sizing: border-box; /* Ensures padding doesn't cause overflow */
+        }
+
+        .container {
+            width: 95%; /* More responsive on small screens */
+            max-width: 600px;
+            background: #ffffff;
+            padding: 1.5rem; /* Slightly reduced padding */
+            border-radius: 10px;
+            box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
+        }
+
+        h1 {
+            margin-top: 0;
+        }
+
+        .controls {
+            margin-bottom: 2rem;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            justify-content: center;
+            align-items: center;
+        }
+
+        button {
+            padding: 10px 15px;
+            font-size: 1rem;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            background-color: #007bff;
+            color: white;
+            transition: background-color 0.2s;
+            -webkit-tap-highlight-color: transparent; /* Improves mobile tap */
+        }
+
+        button:hover {
+            background-color: #0056b3;
+        }
+
+        #resetButton {
+            background-color: #6c757d;
+        }
+        #resetButton:hover {
+            background-color: #5a6268;
+        }
+
+        .stage {
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            min-height: 380px; /* Increased height for cylinder */
+            padding: 1rem;
+            border: 1px dashed #ccc;
+            border-radius: 5px;
+            background: #fafafa;
+            overflow: hidden; /* Prevents large cubes from breaking layout */
+        }
+
+        /* --- Ice Cube --- */
+        #ice-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            width: 250px; /* Give it some space */
+        }
+
+        .ice-cube {
+            width: 100px; /* Default visual size */
+            height: 100px; /* Default visual size */
+            background-color: #aeeeee;
+            border: 2px solid #9cdbdb;
+            opacity: 0.8;
+            transition: all 0.3s ease;
+            max-width: 100%; /* Ensures it scales down if needed */
+            flex-shrink: 0;
+            /* Simple 3D effect */
+            border-right: 5px solid #8acaca;
+            border-bottom: 5px solid #8acaca;
+        }
+        
+        #ice-dimensions-text {
+            font-weight: bold;
+            margin-top: 1rem;
+            font-size: 0.9rem;
+        }
+        
+        #ice-volume-calc {
+            font-size: 0.9rem;
+            color: #555;
+        }
+
+        /* --- Graduated Cylinder --- */
+        #beaker-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .beaker {
+            width: 120px; /* Narrower */
+            height: 300px; /* Represents 1500mL. 1px = 5mL */
+            border: 3px solid #777;
+            border-top: none;
+            position: relative;
+            /* Minor ticks every 10px (50mL) */
+            background-image: linear-gradient(
+                to top,
+                #bbb 1px,
+                transparent 1px
+            );
+            background-size: 100% 10px; 
+            flex-shrink: 0; /* Prevents beaker from shrinking */
+            border-radius: 0 0 5px 5px;
+        }
+
+        .beaker-mark {
+            position: absolute;
+            left: 100%;
+            margin-left: 5px;
+            font-size: 0.7rem; /* Smaller font */
+            color: #555;
+            transform: translateY(50%);
+            white-space: nowrap;
+        }
+        
+        /* Major ticks every 20px (100mL) */
+        .beaker-mark.major {
+            width: 15px; /* Longer line */
+            border-top: 2px solid #777;
+            left: -15px; /* Position inside beaker */
+        }
+        
+        .beaker-mark.label {
+             left: 100%;
+             margin-left: 5px;
+             border: none;
+             width: auto;
+        }
+        
+
+        .water {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            width: 100%;
+            height: 0; /* Changed by JS */
+            background-color: #3498db;
+            transition: height 1s ease-out;
+            opacity: 0.9;
+        }
+
+        /* --- Utility Classes --- */
+        .hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h1>Ice Density Experiment</h1>
+        <p>See what happens to the volume when a cube of ice melts.</p>
+        
+        <div class="controls">
+            <button id="createIceButton">Create Random Ice Cube</button>
+            <button id="meltButton" class="hidden">Melt Ice</button>
+            <button id="resetButton" class="hidden">Reset</button>
+        </div>
+
+        <div class="stage">
+            <!-- Ice Cube Area -->
+            <div id="ice-container" class="hidden">
+                <div class="ice-cube"></div>
+                <p id="ice-dimensions-text"></p>
+                <p id="ice-volume-calc">Calculated Volume (LxWxH): ________</p>
+            </div>
+
+            <!-- Beaker Area -->
+            <div id="beaker-container" class="hidden">
+                <div class="beaker">
+                    <div class="water"></div>
+                    <!-- Markings for the beaker. 1px = 5mL. 100mL = 20px -->
+                    <span class="beaker-mark label" style="bottom: 20px;">100 mL</span>
+                    <span class="beaker-mark major" style="bottom: 20px;"></span>
+                    <span class="beaker-mark label" style="bottom: 40px;">200 mL</span>
+                    <span class="beaker-mark major" style="bottom: 40px;"></span>
+                    <span class="beaker-mark label" style="bottom: 60px;">300 mL</span>
+                    <span class="beaker-mark major" style="bottom: 60px;"></span>
+                    <span class="beaker-mark label" style="bottom: 80px;">400 mL</span>
+                    <span class="beaker-mark major" style="bottom: 80px;"></span>
+                    <span class="beaker-mark label" style="bottom: 100px;">500 mL</span>
+                    <span class="beaker-mark major" style="bottom: 100px;"></span>
+                    <span class="beaker-mark label" style="bottom: 120px;">600 mL</span>
+                    <span class="beaker-mark major" style="bottom: 120px;"></span>
+                    <span class="beaker-mark label" style="bottom: 140px;">700 mL</span>
+                    <span class="beaker-mark major" style="bottom: 140px;"></span>
+                    <span class="beaker-mark label" style="bottom: 160px;">800 mL</span>
+                    <span class="beaker-mark major" style="bottom: 160px;"></span>
+                    <span class="beaker-mark label" style="bottom: 180px;">900 mL</span>
+                    <span class="beaker-mark major" style="bottom: 180px;"></span>
+                    <span class="beaker-mark label" style="bottom: 200px;">1000 mL</span>
+                    <span class="beaker-mark major" style="bottom: 200px;"></span>
+                    <span class="beaker-mark label" style="bottom: 220px;">1100 mL</span>
+                    <span class="beaker-mark major" style="bottom: 220px;"></span>
+                    <span class="beaker-mark label" style="bottom: 240px;">1200 mL</span>
+                    <span class="beaker-mark major" style="bottom: 240px;"></span>
+                    <span class="beaker-mark label" style="bottom: 260px;">1300 mL</span>
+                    <span class="beaker-mark major" style="bottom: 260px;"></span>
+                    <span class="beaker-mark label" style="bottom: 280px;">1400 mL</span>
+                    <span class="beaker-mark major" style="bottom: 280px;"></span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // JavaScript logic
+        
+        // --- Constants ---
+        const DENSITY_ICE = 0.917;    // g/cm³
+        const DENSITY_WATER = 1.0;    // g/cm³ (or g/mL)
+
+        // --- Visual & Beaker Constants ---
+        const BEAKER_MAX_VOLUME_ML = 1500; // The beaker's visual max capacity
+        const BEAKER_HEIGHT_PX = 300;      // The beaker's height in pixels (1px = 5mL)
+
+        // --- DOM Elements ---
+        const createIceButton = document.getElementById('createIceButton');
+        const meltButton = document.getElementById('meltButton');
+        const resetButton = document.getElementById('resetButton');
+
+        const iceContainer = document.getElementById('ice-container');
+        const iceCube = document.querySelector('.ice-cube');
+        const iceDimensionsText = document.getElementById('ice-dimensions-text');
+
+        const beakerContainer = document.getElementById('beaker-container');
+        const water = document.querySelector('.water');
+        
+        // --- Global State ---
+        let currentMass = 0;
+
+        // --- Event Listeners ---
+        createIceButton.addEventListener('click', createIce);
+        meltButton.addEventListener('click', meltIce);
+        resetButton.addEventListener('click', resetExperiment);
+
+        // --- Functions ---
+
+        function createIce() {
+            // 1. Generate random dimensions
+            // (5 to 11.5 cm) - this range ensures water volume < 1500mL
+            const L = 5 + Math.random() * 6.5;
+            const W = 5 + Math.random() * 6.5;
+            const H = 5 + Math.random() * 6.5;
+
+            // 2. Calculate Ice Volume and Mass
+            const iceVolume = L * W * H;
+            currentMass = iceVolume * DENSITY_ICE;
+
+            // 3. Update Ice Visuals
+            // Scale visual size based on L and H
+            const visualWidth = Math.max(50, Math.min(L * 10, 200)); 
+            const visualHeight = Math.max(50, Math.min(H * 10, 200));
+            iceCube.style.width = `${visualWidth}px`;
+            iceCube.style.height = `${visualHeight}px`;
+
+            // 4. Update Text
+            iceDimensionsText.textContent = `L: ${L.toFixed(1)}cm, W: ${W.toFixed(1)}cm, H: ${H.toFixed(1)}cm`;
+
+            // 5. Update UI
+            iceContainer.classList.remove('hidden');
+            meltButton.classList.remove('hidden');
+            
+            // Hide beaker
+            beakerContainer.classList.add('hidden');
+            water.style.height = '0px'; // Reset water level
+        }
+
+        function meltIce() {
+            if (currentMass <= 0) return; // Nothing to melt
+
+            // 1. Calculate Water Volume from Mass
+            // Mass is conserved!
+            const waterVolume = currentMass / DENSITY_WATER; // V = m / d
+
+            // 2. Calculate Visual Water Height
+            // 1px = 5mL, so height = waterVolume / 5
+            let waterHeight = waterVolume / 5; // Simpler math!
+
+            // Cap height at beaker's max height
+            if (waterHeight > BEAKER_HEIGHT_PX) {
+                waterHeight = BEAKER_HEIGHT_PX;
+                console.warn("Warning: Volume exceeds beaker's visual capacity!");
+            }
+
+            // 3. Update Beaker Visuals
+            water.style.height = `${waterHeight.toFixed(1)}px`; // Set the water height
+
+            // 4. Update UI
+            iceContainer.classList.add('hidden');
+            beakerContainer.classList.remove('hidden');
+            meltButton.classList.add('hidden');
+            resetButton.classList.remove('hidden');
+            
+            // 5. NO TEXT IS SHOWN. Student must read the scale.
+        }
+
+        function resetExperiment() {
+            // Reset state
+            currentMass = 0;
+
+            // Reset UI
+            iceContainer.classList.add('hidden');
+            beakerContainer.classList.add('hidden');
+            
+            meltButton.classList.add('hidden');
+            resetButton.classList.add('hidden');
+            
+            water.style.height = '0px'; // Empty the beaker
+            iceDimensionsText.textContent = "";
+        }
+
+    </script>
+</body>
+</html>
