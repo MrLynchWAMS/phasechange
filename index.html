@@ -629,6 +629,10 @@
     const LJ_EPSILON = 0.5; // Depth of potential well
     const LJ_SIGMA = 6.0; // Distance at which potential is zero
     const LJ_CUTOFF = 15.0; // Cutoff distance for LJ potential
+    
+    // Collision restitution coefficients (energy retention in collisions)
+    const GAS_WALL_RESTITUTION = 0.95; // 95% energy retention for gas-wall collisions
+    const GAS_GAS_RESTITUTION = 0.98; // 98% energy retention for gas-gas collisions
 
     // --- REACT COMPONENTS ---
     function Controls({
@@ -1163,36 +1167,36 @@
               // Strong lattice spring forces to maintain structure
               const dx = p.baseX - p.x;
               const dy = p.baseY - p.y;
-              fx += dx * 0.5; // Strong restoring force
-              fy += dy * 0.5;
+              fx += dx * 0.8; // Stronger restoring force for solid cohesion
+              fy += dy * 0.8;
               
               // Individual thermal vibration (not collective)
-              const vibrationMagnitude = 0.2 * tempFactor;
+              const vibrationMagnitude = 0.15 * tempFactor;
               fx += (rngRef.current.random() - 0.5) * vibrationMagnitude;
               fy += (rngRef.current.random() - 0.5) * vibrationMagnitude;
 
               // Gravity or buoyancy
               if (solidFloats && hasLiquid) {
-                fy -= 0.2; // Reduced buoyancy force
+                fy -= 0.25; // Buoyancy force (upward)
               } else {
-                fy += 0.15; // Reduced gravity
+                fy += 0.20; // Gravity (downward)
               }
               
-              // Strong cohesion to keep solid particles together
+              // Very strong cohesion to keep solid particles together
               const toCenterX = solidCenterX - p.x;
               const toCenterY = solidCenterY - p.y;
               const distToCenter = Math.hypot(toCenterX, toCenterY);
               if (distToCenter > spacing * 2) {
-                fx += (toCenterX / distToCenter) * 0.08;
-                fy += (toCenterY / distToCenter) * 0.08;
+                fx += (toCenterX / distToCenter) * 0.15; // Increased cohesion force
+                fy += (toCenterY / distToCenter) * 0.15;
               }
             } else if (p.type === "liquid") {
-              // Gravity
-              fy += 0.2;
+              // Gravity (stronger for liquids to settle at bottom)
+              fy += 0.25;
               
               // Brownian motion scaled by temperature
-              fx += (rngRef.current.random() - 0.5) * 0.4 * tempFactor;
-              fy += (rngRef.current.random() - 0.5) * 0.4 * tempFactor;
+              fx += (rngRef.current.random() - 0.5) * 0.35 * tempFactor;
+              fy += (rngRef.current.random() - 0.5) * 0.35 * tempFactor;
               
               // Convection: particles near bottom are heated and rise
               const distFromBottom = h - p.y;
@@ -1203,11 +1207,9 @@
                 fx += (rngRef.current.random() - 0.5) * 0.5 * heatFactor * tempFactor;
               }
             } else {
-              // gas: high velocity, minimal forces except thermal
-              fx += (rngRef.current.random() - 0.5) * 0.8 * tempFactor;
-              fy += (rngRef.current.random() - 0.5) * 0.8 * tempFactor;
-              // Slight upward bias for gas
-              fy -= 0.05;
+              // gas: ballistic motion - no continuous forces, only collisions
+              // Gas particles move in straight lines until they collide with walls or other particles
+              // No random thermal forces - purely inertial motion
             }
 
             // Particle-particle interactions using cell list and Lennard-Jones potential
@@ -1237,11 +1239,24 @@
                       
                       // Adjust force strength based on phase interaction
                       if (p.type === "solid" && p2.type === "solid") {
-                        forceMagnitude *= 2.0; // Strong solid-solid bonds
+                        forceMagnitude *= 2.5; // Very strong solid-solid bonds for cohesion
                       } else if (p.type === "liquid" && p2.type === "liquid") {
                         forceMagnitude *= 0.4; // Moderate liquid-liquid cohesion
+                      } else if (p.type === "gas" && p2.type === "gas") {
+                        // Gas-gas: elastic collision (exchange momentum)
+                        // Simple elastic collision in 1D along line of centers
+                        const relVx = p.vx - p2.vx;
+                        const relVy = p.vy - p2.vy;
+                        const dotProduct = relVx * nx2 + relVy * ny2;
+                        
+                        if (dotProduct < 0) { // Particles approaching
+                          // Elastic collision: exchange momentum along collision axis
+                          p.vx -= dotProduct * nx2 * GAS_GAS_RESTITUTION;
+                          p.vy -= dotProduct * ny2 * GAS_GAS_RESTITUTION;
+                        }
+                        forceMagnitude = 0; // No continuous force, only collision
                       } else if (p.type === "gas" || p2.type === "gas") {
-                        forceMagnitude *= 0.1; // Weak gas interactions
+                        forceMagnitude *= 0.05; // Very weak gas interactions with other phases
                       } else {
                         forceMagnitude *= 0.6; // Mixed phase interactions
                       }
@@ -1269,9 +1284,9 @@
               speedLimit = 3.0;
               damping = 0.90; // Moderate damping for viscosity
             } else {
-              // gas: minimal damping, pure inertial motion
-              speedLimit = 10;
-              damping = 0.98;
+              // gas: no damping for pure ballistic motion (straight lines)
+              speedLimit = 8;
+              damping = 1.0; // No damping - conservation of momentum
             }
 
             p.vx *= damping;
@@ -1290,19 +1305,35 @@
             // Boundary conditions with proper collisions
             if (p.x < 6) {
               p.x = 6;
-              p.vx = Math.abs(p.vx) * 0.3;
+              if (p.type === "gas") {
+                p.vx = Math.abs(p.vx) * GAS_WALL_RESTITUTION; // Nearly elastic collision for gas
+              } else {
+                p.vx = Math.abs(p.vx) * 0.3;
+              }
             }
             if (p.x > w - 6) {
               p.x = w - 6;
-              p.vx = -Math.abs(p.vx) * 0.3;
+              if (p.type === "gas") {
+                p.vx = -Math.abs(p.vx) * GAS_WALL_RESTITUTION; // Nearly elastic collision for gas
+              } else {
+                p.vx = -Math.abs(p.vx) * 0.3;
+              }
             }
             if (p.y < 6) {
               p.y = 6;
-              p.vy = Math.abs(p.vy) * 0.3;
+              if (p.type === "gas") {
+                p.vy = Math.abs(p.vy) * GAS_WALL_RESTITUTION; // Nearly elastic collision for gas
+              } else {
+                p.vy = Math.abs(p.vy) * 0.3;
+              }
             }
             if (p.y > h - 8) {
               p.y = h - 8;
-              p.vy = -Math.abs(p.vy) * (p.type === "gas" ? 0.5 : 0.3);
+              if (p.type === "gas") {
+                p.vy = -Math.abs(p.vy) * GAS_WALL_RESTITUTION; // Nearly elastic collision for gas
+              } else {
+                p.vy = -Math.abs(p.vy) * 0.3;
+              }
             }
           }
           
